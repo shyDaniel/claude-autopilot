@@ -82,6 +82,36 @@ autopilot run . --max-refinements 5
 autopilot run . --autopilot-source /path/to/claude-autopilot
 ```
 
+### Email alerts on big events (optional)
+
+Autopilot sends email on four **big** events only — nothing per-iteration,
+so it will not spam:
+
+| Kind              | When                                                                |
+| ----------------- | ------------------------------------------------------------------- |
+| `done`            | Judge flips `done: true` — the project is shipped                   |
+| `big-progress`    | Outstanding list drops ≥ 50% vs baseline + ≥ 3 absolute, OR ≥ 5 closed in one iteration |
+| `self-refined`    | Stagnation triggered meta-refinement and autopilot successfully relaunched |
+| `needs-attention` | Refinement failed or auto-refine disabled — human intervention required |
+
+Throttled at 10 min per kind. Configured via the same env vars as
+`../news-alerter`'s Gmail SMTP mailer — set these in your shell before
+running `autopilot`:
+
+```bash
+export SMTP_HOST=smtp.gmail.com
+export SMTP_PORT=587
+export SMTP_USER=you@gmail.com
+export SMTP_PASSWORD=<google-app-password>
+export EMAIL_FROM=you@gmail.com
+export EMAIL_TO=you@gmail.com
+```
+
+If you already have news-alerter's `.env` populated, reuse it:
+`export $(grep -v '^#' /home/hanyu/projects/news-alerter/.env | xargs)`.
+
+Pass `--no-email` to disable even when env vars are set.
+
 ### Surveillance (run in another shell, anytime)
 
 ```bash

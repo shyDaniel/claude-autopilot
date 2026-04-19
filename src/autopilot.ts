@@ -24,6 +24,12 @@ import {
   runMetaRefinement,
   writeRefinementFailureNote,
 } from './commands/refine.js';
+import {
+  Notifier,
+  evaluateBigProgress,
+  loadNotifierConfig,
+  type BigProgressState,
+} from './notifier.js';
 
 export interface AutopilotOptions {
   repo: string;
@@ -40,6 +46,7 @@ export interface AutopilotOptions {
   autoRefine: boolean;
   autopilotSource?: string;
   maxRefinements: number;
+  emailDisabled: boolean;
 }
 
 const BASE_BACKOFF_MS = 4_000;
@@ -65,6 +72,11 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
     commitsSinceStart: 0,
   });
   await status.update({});
+
+  const notifier = new Notifier(loadNotifierConfig(opts.emailDisabled));
+  const bigProgressState: BigProgressState = { baseline: null, prev: null };
+  if (notifier.enabled) log.info(`email alerts: on (to ${process.env.EMAIL_TO || process.env.SMTP_USER})`);
+  else log.info('email alerts: off (set SMTP_USER + SMTP_PASSWORD env to enable)');
 
   const workerSelector = new ModelSelector(opts.workerModels, 'worker', async (from, to, reason) => {
     log.warn(`worker: falling back ${from} → ${to} (${reason.slice(0, 120)}…)`);
@@ -178,8 +190,30 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
       log.info(verdict.summary);
       await events.emit({ iter: state.iteration, phase: 'loop', kind: 'end', msg: 'done' });
       await status.update({ phase: 'stopped', stopReason: 'done', currentAction: undefined });
+      await notifier.sendImmediate(
+        'done',
+        `[autopilot] SHIPPED: ${repo}`,
+        `The judge has confirmed FINAL_GOAL.md is fully satisfied after ${state.iteration} iteration${state.iteration === 1 ? '' : 's'}.\n\nRepo: ${repo}\nFinished: ${new Date().toISOString()}\nTotal commits this run: ${afterSnapCount(initialSnap, snapshotRepo(repo))}\n\nVerdict summary:\n${verdict.summary}\n`,
+      );
       break;
     }
+
+    // Big-progress detection BEFORE updating bigProgressState.prev.
+    const bp = evaluateBigProgress(bigProgressState, verdict.outstanding.length);
+    if (bp.alert && bigProgressState.prev !== null) {
+      await notifier.send(
+        'big-progress',
+        `[autopilot] big progress on ${nameFromPath(repo)}: ${bp.from} → ${bp.to} outstanding`,
+        `Autopilot made a meaningful leap on ${repo} at iteration ${state.iteration}.\n\n` +
+          `Outstanding items: ${bp.from} → ${bp.to} (${bp.reason === 'one-shot' ? 'single-iteration drop' : 'cumulative halving'})\n\n` +
+          `Current judge summary:\n${verdict.summary}\n\n` +
+          `Remaining:\n${verdict.outstanding.slice(0, 10).map((b) => '  - ' + b).join('\n')}${verdict.outstanding.length > 10 ? '\n  … and ' + (verdict.outstanding.length - 10) + ' more' : ''}\n`,
+      );
+      bigProgressState.baseline = verdict.outstanding.length;
+    } else if (bigProgressState.baseline === null) {
+      bigProgressState.baseline = verdict.outstanding.length;
+    }
+    bigProgressState.prev = verdict.outstanding.length;
 
     log.info(`outstanding: ${truncate(verdict.summary, 240)}`);
     for (const b of verdict.outstanding.slice(0, 8)) log.dim(`  - ${b}`);
@@ -305,15 +339,44 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
             state.refinementsSoFar += 1;
             await saveState(repo, state);
             log.ok('refinement committed; relaunching autopilot with --resume');
+            await notifier.sendImmediate(
+              'self-refined',
+              `[autopilot] self-refined: ${nameFromPath(repo)} (refinement #${state.refinementsSoFar})`,
+              `Autopilot detected stagnation on ${repo} and successfully refined its own source.\n\n` +
+                `Autopilot commit: ${r.preHeadSha?.slice(0, 7)} → ${r.postHeadSha?.slice(0, 7)}\n` +
+                `Refinements so far this run: ${state.refinementsSoFar} / ${opts.maxRefinements}\n` +
+                `Transcript: ${r.transcriptPath}\n\n` +
+                `Stagnation reason: ${reason}\n\n` +
+                `Autopilot is now relaunching against the target with --resume.\n`,
+            );
             exitCode = await relaunchAutopilot();
             break;
           } else {
             await writeRefinementFailureNote(repo, r.reason ?? 'unknown');
             log.err(`refinement failed: ${r.reason}`);
+            await notifier.sendImmediate(
+              'needs-attention',
+              `[autopilot] stuck: ${nameFromPath(repo)} needs you`,
+              `Autopilot halted on ${repo} and a refinement attempt also failed — human attention required.\n\n` +
+                `Iteration: ${state.iteration}\n` +
+                `Stagnation reason: ${reason}\n` +
+                `Refinement failure: ${r.reason}\n` +
+                `Refinements attempted: ${state.refinementsSoFar} / ${opts.maxRefinements}\n\n` +
+                `Stagnation report: ${reportPath}\n` +
+                `Events log: ${repo}/.autopilot/events.jsonl\n`,
+            );
             exitCode = 3;
             break;
           }
         } else {
+          await notifier.sendImmediate(
+            'needs-attention',
+            `[autopilot] stuck: ${nameFromPath(repo)} needs you`,
+            `Autopilot halted on ${repo} and auto-refine is disabled.\n\n` +
+              `Iteration: ${state.iteration}\n` +
+              `Stagnation reason: ${reason}\n` +
+              `Stagnation report: ${reportPath}\n`,
+          );
           exitCode = 3;
           break;
         }
@@ -401,6 +464,15 @@ function sleep(ms: number): Promise<void> {
 
 function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+
+function nameFromPath(p: string): string {
+  const parts = p.split('/').filter(Boolean);
+  return parts[parts.length - 1] ?? p;
+}
+
+function afterSnapCount(before: { commitCountTotal: number }, after: { commitCountTotal: number }): number {
+  return Math.max(0, after.commitCountTotal - before.commitCountTotal);
 }
 
 // re-export defaults for CLI consumption

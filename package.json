@@ -1,6 +1,6 @@
 {
   "name": "claude-autopilot",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Autonomous wrapper that runs Claude Code in an infinite loop on any repo until FINAL_GOAL.md is fully satisfied — zero human in the loop.",
   "type": "module",
   "bin": {
@@ -29,10 +29,12 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0",
     "commander": "^12.1.0",
-    "kleur": "^4.1.5"
+    "kleur": "^4.1.5",
+    "nodemailer": "^6.9.16"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@types/nodemailer": "^6.4.17",
     "tsx": "^4.19.2",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"

@@ -107,3 +107,41 @@ Opus hits rate-limit / overload / quota errors.
 **Tests added:** `test/model.test.ts` covers the quota classifier (7
 positives, 4 negatives), `ModelSelector`'s sticky-downgrade semantics, and
 `withModel`'s retry-once-then-rethrow behavior. 38 tests total, all passing.
+
+## 2026-04-19 — email alerts on big events (v0.4.0)
+
+Added targeted email notifications so big milestones reach you even if you're
+not watching the terminal, while staying silent on per-iteration noise.
+
+**New module:** [src/notifier.ts](src/notifier.ts)
+- `loadNotifierConfig()` reads the same Gmail-SMTP env-var contract as
+  news-alerter's `smtp_mailer.py` (SMTP_HOST / PORT / USER / PASSWORD /
+  EMAIL_FROM / EMAIL_TO), so sharing `.env` across the two tools works.
+- `Notifier` wraps `nodemailer` with STARTTLS on port 587. Methods: `send`
+  (throttled, 10min min-interval per kind) and `sendImmediate` (for
+  terminal events that fire at most once per process anyway).
+- `evaluateBigProgress()` is the pure decision function: alerts on a
+  single-iteration drop of ≥ 5 outstanding items (one-shot), OR when
+  current ≤ baseline/2 AND baseline − current ≥ 3 (cumulative halving).
+  Baseline resets after each alert to prevent retriggering on the same
+  gain.
+
+**Four alert kinds, nothing else:**
+
+| Kind              | Trigger                                                                  |
+| ----------------- | ------------------------------------------------------------------------ |
+| `done`            | Judge returns `done: true` — project shipped                             |
+| `big-progress`    | `evaluateBigProgress()` returns `alert: true`                            |
+| `self-refined`    | Meta-refinement agent committed a fix + autopilot relaunched             |
+| `needs-attention` | Refinement failed / auto-refine disabled — human intervention required   |
+
+**Wired** into [src/autopilot.ts](src/autopilot.ts) at each trigger point.
+Enabled automatically when SMTP creds are in env; disabled with
+`--no-email`.
+
+**Tests:** `test/notifier.test.ts` covers `evaluateBigProgress` (8 cases:
+one-shot threshold, halving floor, growth, reason priority) and
+`loadNotifierConfig` env resolution (4 cases). 50 tests total, all
+passing.
+
+**Dependency:** added `nodemailer` + `@types/nodemailer`.
