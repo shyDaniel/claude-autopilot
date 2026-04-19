@@ -47,6 +47,7 @@ export interface AutopilotOptions {
   autopilotSource?: string;
   maxRefinements: number;
   emailDisabled: boolean;
+  verbose: boolean;
 }
 
 const BASE_BACKOFF_MS = 4_000;
@@ -165,6 +166,7 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
         maxTurns: opts.judgeMaxTurns,
         events,
         status,
+        verbose: opts.verbose,
       });
     } catch (err) {
       consecutiveErrors += 1;
@@ -240,6 +242,7 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
         maxTurns: opts.workerMaxTurns,
         events,
         status,
+        verbose: opts.verbose,
       });
       workerTranscript = result.transcript;
       consecutiveErrors = 0;

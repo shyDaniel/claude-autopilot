@@ -1,9 +1,10 @@
-import { query, type SDKMessage, type Options } from '@anthropic-ai/claude-agent-sdk';
+import { query, type Options } from '@anthropic-ai/claude-agent-sdk';
 import { judgePrompt } from './prompts.js';
 import { log } from './logging.js';
 import type { EventLog } from './events.js';
 import type { StatusWriter } from './status.js';
 import { withModel, type ModelSelector } from './model.js';
+import { printMessage } from './transcript.js';
 
 export interface Verdict {
   done: boolean;
@@ -18,6 +19,7 @@ export interface JudgeArgs {
   maxTurns?: number;
   events: EventLog;
   status: StatusWriter;
+  verbose: boolean;
 }
 
 export async function runJudge(args: JudgeArgs): Promise<Verdict> {
@@ -43,7 +45,14 @@ export async function runJudge(args: JudgeArgs): Promise<Verdict> {
         },
       };
       for await (const msg of query({ prompt, options })) {
-        await handleMessage(msg, args, transcript);
+        await printMessage(msg, {
+          label: 'judge',
+          iteration: args.iteration,
+          verbose: args.verbose,
+          events: args.events,
+          status: args.status,
+          transcript,
+        });
       }
     });
   } catch (err) {
@@ -73,36 +82,6 @@ export async function runJudge(args: JudgeArgs): Promise<Verdict> {
 
   if (!extractVerdict(joined)) log.warn('judge returned no parseable verdict; assuming not done');
   return verdict;
-}
-
-async function handleMessage(msg: SDKMessage, args: JudgeArgs, transcript: string[]): Promise<void> {
-  if (msg.type === 'assistant') {
-    const content = (msg as unknown as { message?: { content?: unknown[] } }).message?.content ?? [];
-    for (const block of content as Array<{ type: string; text?: string; name?: string }>) {
-      if (block.type === 'text' && block.text) {
-        transcript.push(block.text);
-        const firstLine = block.text.split('\n').find((l) => l.trim()) ?? '';
-        if (firstLine) {
-          await args.events.emit({
-            iter: args.iteration,
-            phase: 'judge',
-            kind: 'text',
-            msg: firstLine.length > 240 ? firstLine.slice(0, 239) + '…' : firstLine,
-          });
-          await args.status.update({
-            currentAction: `judge thinking: ${firstLine.length > 80 ? firstLine.slice(0, 79) + '…' : firstLine}`,
-          });
-        }
-      } else if (block.type === 'tool_use') {
-        const name = block.name ?? 'tool';
-        await args.events.emit({ iter: args.iteration, phase: 'judge', kind: 'tool', msg: name });
-        await args.status.update({ currentAction: `judge tool: ${name}` });
-      }
-    }
-  } else if (msg.type === 'result') {
-    const r = (msg as unknown as { result?: string }).result;
-    if (r) transcript.push(r);
-  }
 }
 
 export function extractVerdict(text: string): Verdict | null {

@@ -35,6 +35,7 @@ program
   .option('--autopilot-source <path>', 'path to the claude-autopilot source repo (auto-detected if omitted)')
   .option('--max-refinements <n>', 'cap how many times autopilot can refine itself per target run', (v) => parseInt(v, 10), 3)
   .option('--no-email', 'disable email alerts even if SMTP env vars are set')
+  .option('-v, --verbose', 'stream full text blocks and full tool inputs to stdout (otherwise only first line / name preview)')
   .option('--no-push', 'commit but do not push')
   .option('--dry-run', 'run the judge once and exit, without invoking the worker')
   .option('--resume', 'resume from .autopilot/state.json inside the target repo')
@@ -59,6 +60,7 @@ program
         autopilotSource: opts.autopilotSource as string | undefined,
         maxRefinements: (opts.maxRefinements as number | undefined) ?? 3,
         emailDisabled: (opts as { email?: boolean }).email === false,
+        verbose: Boolean(opts.verbose),
         noPush: (opts as { push?: boolean }).push === false,
         dryRun: Boolean(opts.dryRun),
         resume: Boolean(opts.resume),
