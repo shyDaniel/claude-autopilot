@@ -62,3 +62,48 @@ detection (including resilience to reordering/case), verdict extraction edge
 cases, and event log round-tripping.
 
 **Exit codes standardized**: 0 done, 1 error, 2 max-iterations, 3 stagnation.
+
+## 2026-04-19 — self-refinement + model fallback (v0.3.0)
+
+Made autopilot genuinely autonomous end-to-end: it now improves its own
+prompts / source on stagnation, and transparently downgrades to Sonnet when
+Opus hits rate-limit / overload / quota errors.
+
+**New modules:**
+
+- [src/model.ts](src/model.ts) — `ModelSelector` with sticky downgrade from a
+  configurable `{primary, fallback}` pair (default
+  `claude-opus-4-7`→`claude-sonnet-4-6`). `withModel(selector, fn)` wraps any
+  SDK call and retries once on quota-like errors. Quota classifier matches
+  `rate_limit`, `overloaded`, `insufficient_quota`, `credit_balance`,
+  `over_capacity`, `529`, `429`, `too many requests` (case-insensitive).
+- [src/commands/refine.ts](src/commands/refine.ts) — `runMetaRefinement()`
+  spawns a Claude Code session with `cwd = <autopilot source repo>`, passes
+  it the stagnation report + paths to recent iteration artifacts, and lets it
+  edit autopilot's own source. Runs `npm install && npm test && npm run
+  build` afterward; refuses to relaunch on a broken autopilot. On success,
+  `relaunchAutopilot()` re-execs `node <argv[1]> <args...> --resume` with
+  inherited stdio. `detectAutopilotSource()` walks up from `import.meta.url`
+  to find a writable git checkout named `claude-autopilot`.
+- New prompt `metaRefinePrompt()` in [src/prompts.ts](src/prompts.ts)
+  instructs the meta-agent to diagnose the stagnation, make a surgical fix
+  to autopilot (typically prompts or metrics), and verify tests + build
+  before committing.
+
+**Changes:**
+
+- Worker and judge now take a `ModelSelector` instead of a raw `model?` field;
+  they both call `withModel()` internally. Fallback events are emitted with
+  `kind: 'error'` so `autopilot watch` shows the downgrade live.
+- Loop threads a `workerSelector` and `judgeSelector` through each iteration;
+  on stagnation, a fresh selector is used for the meta-agent so a sticky
+  worker downgrade doesn't automatically weaken the refinement attempt.
+- `AutopilotState` gained `refinementsSoFar` counter; `loadState()` hydrates
+  old state files that predate this field.
+- CLI gained `--worker-model`, `--worker-fallback-model`, `--judge-model`,
+  `--judge-fallback-model`, `--no-auto-refine`, `--autopilot-source <path>`,
+  `--max-refinements <n>` (default 3).
+
+**Tests added:** `test/model.test.ts` covers the quota classifier (7
+positives, 4 negatives), `ModelSelector`'s sticky-downgrade semantics, and
+`withModel`'s retry-once-then-rethrow behavior. 38 tests total, all passing.

@@ -10,15 +10,26 @@ import {
   detectStagnation,
   snapshotRepo,
   type IterationSnapshot,
-  type RepoMetrics,
 } from './metrics.js';
 import { writeIterationArtifacts, writeStagnationReport } from './artifacts.js';
+import {
+  DEFAULT_JUDGE_MODELS,
+  DEFAULT_WORKER_MODELS,
+  ModelSelector,
+  type ModelPreference,
+} from './model.js';
+import {
+  detectAutopilotSource,
+  relaunchAutopilot,
+  runMetaRefinement,
+  writeRefinementFailureNote,
+} from './commands/refine.js';
 
 export interface AutopilotOptions {
   repo: string;
   maxIterations?: number;
-  workerModel?: string;
-  judgeModel?: string;
+  workerModels: ModelPreference;
+  judgeModels: ModelPreference;
   noPush: boolean;
   dryRun: boolean;
   resume: boolean;
@@ -26,6 +37,9 @@ export interface AutopilotOptions {
   workerMaxTurns?: number;
   stagnationThreshold: number;
   stagnationDisabled: boolean;
+  autoRefine: boolean;
+  autopilotSource?: string;
+  maxRefinements: number;
 }
 
 const BASE_BACKOFF_MS = 4_000;
@@ -51,6 +65,28 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
     commitsSinceStart: 0,
   });
   await status.update({});
+
+  const workerSelector = new ModelSelector(opts.workerModels, 'worker', async (from, to, reason) => {
+    log.warn(`worker: falling back ${from} → ${to} (${reason.slice(0, 120)}…)`);
+    await events.emit({
+      iter: state.iteration,
+      phase: 'worker',
+      kind: 'error',
+      msg: `fallback ${from} → ${to}`,
+      data: { from, to, reason },
+    });
+  });
+  const judgeSelector = new ModelSelector(opts.judgeModels, 'judge', async (from, to, reason) => {
+    log.warn(`judge: falling back ${from} → ${to} (${reason.slice(0, 120)}…)`);
+    await events.emit({
+      iter: state.iteration,
+      phase: 'judge',
+      kind: 'error',
+      msg: `fallback ${from} → ${to}`,
+      data: { from, to, reason },
+    });
+  });
+
   await events.emit({
     iter: 0,
     phase: 'loop',
@@ -62,14 +98,22 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
       maxIterations: opts.maxIterations ?? null,
       stagnationThreshold: opts.stagnationThreshold,
       stagnationDisabled: opts.stagnationDisabled,
+      workerModels: opts.workerModels,
+      judgeModels: opts.judgeModels,
+      autoRefine: opts.autoRefine,
+      maxRefinements: opts.maxRefinements,
+      refinementsSoFar: state.refinementsSoFar,
     },
   });
 
   log.banner(`claude-autopilot @ ${repo}`);
   log.info(
-    `pid=${process.pid}  resume=${opts.resume}  maxIterations=${opts.maxIterations ?? '∞'}  noPush=${opts.noPush}  dryRun=${opts.dryRun}  stagnationThreshold=${opts.stagnationThreshold}${opts.stagnationDisabled ? ' (disabled)' : ''}`,
+    `pid=${process.pid}  resume=${opts.resume}  maxIter=${opts.maxIterations ?? '∞'}  noPush=${opts.noPush}  dryRun=${opts.dryRun}  stagThreshold=${opts.stagnationThreshold}${opts.stagnationDisabled ? ' (disabled)' : ''}  autoRefine=${opts.autoRefine}`,
   );
-  if (state.iteration > 0) log.info(`resuming from iteration ${state.iteration}`);
+  log.info(
+    `models: worker=${opts.workerModels.primary} (fallback ${opts.workerModels.fallback})  judge=${opts.judgeModels.primary} (fallback ${opts.judgeModels.fallback})`,
+  );
+  if (state.iteration > 0) log.info(`resuming from iteration ${state.iteration} (refinements so far: ${state.refinementsSoFar})`);
 
   const stopHandler = async (reason: 'interrupted'): Promise<void> => {
     await events.emit({ iter: state.iteration, phase: 'loop', kind: 'end', msg: reason });
@@ -101,11 +145,11 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
 
     let verdict: Verdict;
     try {
-      log.step('judge: evaluating repo state');
+      log.step(`judge: evaluating repo state (model=${judgeSelector.current()})`);
       verdict = await runJudge({
         repoPath: repo,
         iteration: state.iteration,
-        model: opts.judgeModel,
+        selector: judgeSelector,
         maxTurns: opts.judgeMaxTurns,
         events,
         status,
@@ -151,14 +195,14 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
 
     let workerTranscript = '';
     try {
-      log.step('worker: making progress');
+      log.step(`worker: making progress (model=${workerSelector.current()})`);
       const result = await runWorker({
         repoPath: repo,
         iteration: state.iteration,
         outstandingSummary: verdict.summary,
         outstandingBullets: verdict.outstanding,
         noPush: opts.noPush,
-        model: opts.workerModel,
+        selector: workerSelector,
         maxTurns: opts.workerMaxTurns,
         events,
         status,
@@ -213,9 +257,66 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
       const stagnant = countTrailingStagnant(history, opts.stagnationThreshold);
       await status.update({ stagnantIterations: stagnant });
       if (stag.stagnant) {
-        await onStagnation(repo, state, history, opts, events, status, stag.reason ?? 'stagnant');
-        exitCode = 3;
-        break;
+        const reason = stag.reason ?? 'stagnant';
+        const reportPath = await writeStagnationReportFull(repo, state, history, opts, reason);
+        await events.emit({
+          iter: state.iteration,
+          phase: 'loop',
+          kind: 'stagnation',
+          msg: reason,
+          data: { report: reportPath },
+        });
+        await status.update({
+          phase: 'stopped',
+          stopReason: 'stagnant',
+          stopMessage: reason,
+          currentAction: undefined,
+        });
+        log.err(`STAGNATION: ${reason}`);
+        log.info(`report: ${reportPath}`);
+
+        if (opts.autoRefine) {
+          const autopilotSource = opts.autopilotSource ?? detectAutopilotSource();
+          if (!autopilotSource) {
+            log.err('auto-refine enabled but autopilot source not found (not a git checkout of claude-autopilot); exit 3');
+            exitCode = 3;
+            break;
+          }
+          if (state.refinementsSoFar >= opts.maxRefinements) {
+            log.err(`auto-refine budget exhausted (${state.refinementsSoFar}/${opts.maxRefinements}); exit 3`);
+            exitCode = 3;
+            break;
+          }
+
+          // Use a FRESH selector for refinement so a sticky worker downgrade
+          // doesn't automatically force the meta-agent to a weaker model.
+          const refineSelector = new ModelSelector(opts.workerModels, 'worker');
+          const r = await runMetaRefinement({
+            autopilotSource,
+            targetRepo: repo,
+            stagnationReportPath: reportPath,
+            refinementsSoFar: state.refinementsSoFar,
+            maxRefinements: opts.maxRefinements,
+            selector: refineSelector,
+            events,
+          });
+
+          if (r.success) {
+            state.refinementsSoFar += 1;
+            await saveState(repo, state);
+            log.ok('refinement committed; relaunching autopilot with --resume');
+            exitCode = await relaunchAutopilot();
+            break;
+          } else {
+            await writeRefinementFailureNote(repo, r.reason ?? 'unknown');
+            log.err(`refinement failed: ${r.reason}`);
+            exitCode = 3;
+            break;
+          }
+        } else {
+          exitCode = 3;
+          break;
+        }
       }
     }
 
@@ -237,15 +338,13 @@ function countTrailingStagnant(history: IterationSnapshot[], threshold: number):
   return Math.min(count, threshold);
 }
 
-async function onStagnation(
+async function writeStagnationReportFull(
   repo: string,
   state: AutopilotState,
   history: IterationSnapshot[],
   opts: AutopilotOptions,
-  events: EventLog,
-  status: StatusWriter,
   reason: string,
-): Promise<void> {
+): Promise<string> {
   const recent = history.slice(-Math.min(history.length, opts.stagnationThreshold + 1));
   const body = [
     '# STAGNATION_REPORT',
@@ -256,6 +355,7 @@ async function onStagnation(
     `- Started: ${state.startedAt}`,
     `- Detected: ${new Date().toISOString()}`,
     `- Threshold: ${opts.stagnationThreshold}`,
+    `- Refinements attempted so far: ${state.refinementsSoFar}`,
     '',
     '## Recent iterations',
     '',
@@ -268,7 +368,7 @@ async function onStagnation(
     }),
     '## What to refine',
     '',
-    'If the same outstanding items keep appearing without progress, one of:',
+    'Typical root causes, in order of likelihood:',
     '',
     '1. **FINAL_GOAL.md is under-specified** — the judge keeps finding the',
     '   same gap because the acceptance criteria do not pin down what "done"',
@@ -279,29 +379,13 @@ async function onStagnation(
     '3. **The worker prompt is too soft** on a specific failure mode. Edit',
     '   `src/prompts.ts` in the autopilot repo and re-run.',
     '4. **A brittle external dependency** (test flake, network) keeps',
-    '   undoing progress. Inspect recent iteration `worker-transcript.md`',
-    '   files under `.autopilot/iterations/`.',
+    '   undoing progress. Inspect recent `worker-transcript.md` files.',
     '',
     'Artifacts for every iteration are under `.autopilot/iterations/`.',
     '',
   ].join('\n');
 
-  const p = await writeStagnationReport(repo, body);
-  await events.emit({
-    iter: state.iteration,
-    phase: 'loop',
-    kind: 'stagnation',
-    msg: reason,
-    data: { report: p },
-  });
-  await status.update({
-    phase: 'stopped',
-    stopReason: 'stagnant',
-    stopMessage: reason,
-    currentAction: undefined,
-  });
-  log.err(`STAGNATION: ${reason}`);
-  log.info(`report: ${p}`);
+  return await writeStagnationReport(repo, body);
 }
 
 async function backoff(attempt: number, err: Error): Promise<void> {
@@ -318,3 +402,6 @@ function sleep(ms: number): Promise<void> {
 function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
 }
+
+// re-export defaults for CLI consumption
+export { DEFAULT_WORKER_MODELS, DEFAULT_JUDGE_MODELS };

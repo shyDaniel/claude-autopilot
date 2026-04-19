@@ -11,6 +11,7 @@ export interface AutopilotState {
     at: string;
   };
   errors: { at: string; message: string }[];
+  refinementsSoFar: number;
 }
 
 const DIR = '.autopilot';
@@ -19,7 +20,7 @@ const FILE = 'state.json';
 export async function loadState(repo: string): Promise<AutopilotState | null> {
   try {
     const raw = await readFile(join(repo, DIR, FILE), 'utf8');
-    return JSON.parse(raw) as AutopilotState;
+    return hydrateState(JSON.parse(raw) as Partial<AutopilotState>);
   } catch {
     return null;
   }
@@ -36,5 +37,16 @@ export function freshState(): AutopilotState {
     iteration: 0,
     startedAt: new Date().toISOString(),
     errors: [],
+    refinementsSoFar: 0,
+  };
+}
+
+export function hydrateState(raw: Partial<AutopilotState>): AutopilotState {
+  const fresh = freshState();
+  return {
+    ...fresh,
+    ...raw,
+    errors: raw.errors ?? fresh.errors,
+    refinementsSoFar: raw.refinementsSoFar ?? 0,
   };
 }

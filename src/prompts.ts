@@ -66,6 +66,84 @@ ${i.outstandingBullets.length ? i.outstandingBullets.map((b) => '  - ' + b).join
 Begin now. Your first action should be to read FINAL_GOAL.md.`;
 }
 
+export interface MetaRefinePromptInput {
+  autopilotRepo: string;
+  targetRepo: string;
+  stagnationReportPath: string;
+  recentIterationsPath: string;
+  eventsPath: string;
+  refinementsSoFar: number;
+  maxRefinements: number;
+}
+
+export function metaRefinePrompt(i: MetaRefinePromptInput): string {
+  return `You are a staff software engineer called in to **fix claude-autopilot
+itself**, not the downstream target project.
+
+Autopilot is a zero-human-in-the-loop CLI that drives any repo toward its
+FINAL_GOAL.md. It got stuck while driving a target repo, its stagnation
+detector fired, and now you have been dispatched to diagnose and repair
+autopilot so that when it relaunches, it will make progress.
+
+## Paths
+
+- Autopilot source (your cwd, you will edit & commit here):
+    ${i.autopilotRepo}
+- Target repo (READ-ONLY — do NOT modify it):
+    ${i.targetRepo}
+- Stagnation report (the target repo generated this):
+    ${i.stagnationReportPath}
+- Per-iteration artifacts (worker transcripts, diffs, verdicts):
+    ${i.recentIterationsPath}
+- Event stream (every tool call, every phase boundary):
+    ${i.eventsPath}
+- This is refinement #${i.refinementsSoFar + 1} of at most ${i.maxRefinements}.
+
+## Procedure (do all of this)
+
+1. Read the stagnation report in full.
+2. Read FINAL_GOAL.md and WORKLOG.md in the target repo to understand what
+   autopilot was trying to accomplish. (Read-only — do not edit.)
+3. Read the **last 2–3 iteration artifacts** under ${i.recentIterationsPath}
+   — especially \`worker-transcript.md\` and \`verdict.json\`. Look for:
+   - Is the worker trying something that keeps failing silently?
+   - Is the judge flagging the same item repeatedly without the worker ever
+     attempting it?
+   - Is the worker missing a tool/MCP it would need?
+   - Is the worker prompt letting it off the hook in a specific failure mode?
+4. Read autopilot's own source (start with src/prompts.ts, src/worker.ts,
+   src/judge.ts, src/autopilot.ts, src/metrics.ts) and form a concrete
+   hypothesis about what to change.
+5. **Make the change.** Typically this means editing src/prompts.ts (sharper
+   worker mandates, sharper judge rubric, new explicit rules) or
+   src/metrics.ts (stagnation tuning) or adding a new helper. Avoid cosmetic
+   refactors — this is surgical.
+6. Run the full test suite: \`npm test\`. All tests must pass.
+7. Run \`npm run build\`. Build must succeed.
+8. Commit with a descriptive message that references the stagnation root
+   cause, e.g. \`refine worker prompt to forbid silent TODOs after <symptom>\`.
+9. Push to origin.
+10. Append a 2–4 line entry to WORKLOG.md describing the change and why.
+
+## Hard rules
+
+- Never modify ${i.targetRepo} or anything under it.
+- Never skip tests or build. If they fail after your edits, iterate until
+  they pass, or revert your changes and say so in WORKLOG.md.
+- Never introduce \`any\`-typed escape hatches, silent catches, or TODO
+  comments in the code you change.
+- Never commit if tests or build fail.
+- If you conclude the stagnation is entirely due to the TARGET's FINAL_GOAL.md
+  being under-specified (not an autopilot bug), document that clearly in
+  WORKLOG.md AND add an autopilot-side guard: sharpen the judge prompt so
+  autopilot halts earlier and more loudly in similar future situations. You
+  still commit something.
+- NEVER ask clarifying questions. Use subagents, web search, or your own
+  judgment.
+
+Begin now. Your first action is to read ${i.stagnationReportPath}.`;
+}
+
 export function judgePrompt(repoPath: string): string {
   return `You are an uncompromising senior staff engineer doing a final shipping
 review of the repository at:

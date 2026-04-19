@@ -3,6 +3,7 @@ import { judgePrompt } from './prompts.js';
 import { log } from './logging.js';
 import type { EventLog } from './events.js';
 import type { StatusWriter } from './status.js';
+import { withModel, type ModelSelector } from './model.js';
 
 export interface Verdict {
   done: boolean;
@@ -13,7 +14,7 @@ export interface Verdict {
 export interface JudgeArgs {
   repoPath: string;
   iteration: number;
-  model?: string;
+  selector: ModelSelector;
   maxTurns?: number;
   events: EventLog;
   status: StatusWriter;
@@ -21,28 +22,30 @@ export interface JudgeArgs {
 
 export async function runJudge(args: JudgeArgs): Promise<Verdict> {
   const prompt = judgePrompt(args.repoPath);
-  const options: Options = {
-    cwd: args.repoPath,
-    permissionMode: 'bypassPermissions',
-    disallowedTools: ['Write', 'Edit', 'NotebookEdit'],
-    ...(args.model ? { model: args.model } : {}),
-    ...(args.maxTurns ? { maxTurns: args.maxTurns } : {}),
-    systemPrompt: {
-      type: 'preset',
-      preset: 'claude_code',
-      append:
-        'You are the JUDGE in a claude-autopilot loop. Be uncompromising. ' +
-        'Output a single fenced JSON block at the end — nothing else after it.',
-    },
-  };
 
   await args.events.emit({ iter: args.iteration, phase: 'judge', kind: 'start' });
 
   const transcript: string[] = [];
   try {
-    for await (const msg of query({ prompt, options })) {
-      await handleMessage(msg, args, transcript);
-    }
+    await withModel(args.selector, async (model) => {
+      const options: Options = {
+        cwd: args.repoPath,
+        permissionMode: 'bypassPermissions',
+        disallowedTools: ['Write', 'Edit', 'NotebookEdit'],
+        model,
+        ...(args.maxTurns ? { maxTurns: args.maxTurns } : {}),
+        systemPrompt: {
+          type: 'preset',
+          preset: 'claude_code',
+          append:
+            'You are the JUDGE in a claude-autopilot loop. Be uncompromising. ' +
+            'Output a single fenced JSON block at the end — nothing else after it.',
+        },
+      };
+      for await (const msg of query({ prompt, options })) {
+        await handleMessage(msg, args, transcript);
+      }
+    });
   } catch (err) {
     await args.events.emit({
       iter: args.iteration,

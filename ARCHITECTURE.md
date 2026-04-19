@@ -65,6 +65,71 @@ separate shell.
 | [src/commands/status.ts](src/commands/status.ts) | `autopilot status` implementation.                                  |
 | [src/commands/watch.ts](src/commands/watch.ts)   | `autopilot watch` — polling tail with pretty formatting.            |
 | [src/commands/log.ts](src/commands/log.ts)       | `autopilot log` — iteration-level history table.                    |
+| [src/commands/refine.ts](src/commands/refine.ts) | Meta-refinement: spawn Claude on autopilot source, verify, relaunch.|
+| [src/model.ts](src/model.ts)                     | `ModelSelector` + `withModel`: sticky Opus→Sonnet fallback.         |
+
+## Model selection & sticky fallback
+
+Worker and judge each get their own [`ModelSelector`](src/model.ts) with a
+`{primary, fallback}` pair. Default: `{primary: claude-opus-4-7, fallback:
+claude-sonnet-4-6}` for both. The SDK's `query()` is wrapped in
+[`withModel`](src/model.ts):
+
+```
+try {
+  return await fn(selector.current())        // primary
+} catch (err) {
+  if (quota-like err && !already downgraded) {
+    selector.downgrade()                      // sticky for rest of run
+    return await fn(selector.current())       // fallback
+  }
+  throw err
+}
+```
+
+Quota classification matches `rate_limit`, `overloaded`, `insufficient_quota`,
+`credit_balance`, `over_capacity`, `529`, `429`, `too many requests` (case-
+insensitive). One successful downgrade sticks for the rest of the process —
+no flapping, no re-probes — on the assumption that these conditions take
+minutes-to-hours to clear and making progress matters more than staying on
+Opus.
+
+The meta-refinement agent uses a **fresh** selector so a sticky worker
+downgrade doesn't automatically force the meta-agent onto a weaker model.
+
+## Self-refinement on stagnation
+
+When the stagnation detector fires, autopilot writes `STAGNATION_REPORT.md`
+and — if `--auto-refine` (default on) — spawns a third kind of Claude
+session: the **meta-refinement agent** at
+[src/commands/refine.ts](src/commands/refine.ts).
+
+```
+stagnation detected
+  ↓
+writeStagnationReport()            → .autopilot/STAGNATION_REPORT.md
+  ↓
+detectAutopilotSource()            → walks import.meta.url upward to find
+                                     a writable git checkout where
+                                     package.json name == "claude-autopilot"
+  ↓
+runMetaRefinement()                → query() with cwd = autopilot source,
+                                     prompt points at stagnation report +
+                                     recent iteration artifacts in target
+  ↓
+verify: npm install && npm test && npm run build
+  ↓
+if HEAD advanced AND verification passed:
+  state.refinementsSoFar += 1
+  relaunchAutopilot()              → spawn(argv[0], [argv[1], ...opts, --resume])
+                                     inherits stdio; await child exit
+else:
+  exit 3 and append failure note to STAGNATION_REPORT.md
+```
+
+Bounded by `--max-refinements` (default 3) so a pathological meta-agent can't
+spin forever. Each refinement's transcript is saved under
+`<target>/.autopilot/refinements/NNN/transcript.md` for audit.
 
 ## Why separate judge and worker?
 

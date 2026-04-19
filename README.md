@@ -2,8 +2,9 @@
 
 > Zero-human-in-the-loop wrapper around Claude Code. Point it at any repo with
 > a `FINAL_GOAL.md`; it runs Claude Code in an infinite loop until the goal is
-> genuinely shipped — with live observability and stagnation detection so you
-> can check in anytime.
+> genuinely shipped — with live observability, sticky model fallback
+> (Opus 4.7 → Sonnet 4.6 on rate-limit/overload), and self-refinement on
+> stagnation so autopilot improves its own prompts/architecture as it works.
 
 ## What it does
 
@@ -15,10 +16,18 @@ Every iteration:
 2. **Worker** — if not done, a full-permission Claude session
    (`permissionMode: 'bypassPermissions'`) picks one concrete chunk of
    outstanding work, implements it end-to-end, tests it, commits, and pushes.
-3. **Stagnation detector** — if the outstanding list stays ≥ 90% the same
-   and no commits land for N iterations, autopilot halts and writes a
-   `STAGNATION_REPORT.md` so you can refine `FINAL_GOAL.md` or the prompts.
-4. **Repeat** until the judge returns `done: true`.
+3. **Sticky model fallback** — both sessions default to **Opus 4.7**. On a
+   rate-limit / overload / quota error, autopilot transparently downgrades
+   for the rest of the run to **Sonnet 4.6** (configurable) and keeps going.
+4. **Stagnation detector** — if the outstanding list stays ≥ 90% the same
+   and no commits land for N iterations, autopilot halts.
+5. **Self-refinement meta-loop** — on stagnation, a fresh Claude session is
+   spawned with `cwd=<claude-autopilot source repo>`. It reads the
+   stagnation report + recent worker transcripts, edits autopilot's own
+   prompts / architecture / source, runs tests + build (must pass),
+   commits, pushes, and then autopilot rebuilds and relaunches itself with
+   `--resume` so the target run continues with the improved tool.
+6. **Repeat** until the judge returns `done: true`.
 
 The worker is explicitly instructed to **never** ask clarifying questions — it
 spawns subagents or hits the web instead. All configured MCP servers are
@@ -58,8 +67,19 @@ autopilot run . --dry-run
 # resume after a crash
 autopilot run . --resume
 
-# pick specific models
-autopilot run . --worker-model claude-opus-4-7 --judge-model claude-sonnet-4-6
+# pick specific models + fallbacks
+autopilot run . \
+  --worker-model claude-opus-4-7 --worker-fallback-model claude-sonnet-4-6 \
+  --judge-model claude-opus-4-7  --judge-fallback-model claude-sonnet-4-6
+
+# disable the self-refinement meta-loop (default: on)
+autopilot run . --no-auto-refine
+
+# cap self-refinement budget per run (default 3)
+autopilot run . --max-refinements 5
+
+# explicit autopilot source path (default: auto-detected from import.meta.url)
+autopilot run . --autopilot-source /path/to/claude-autopilot
 ```
 
 ### Surveillance (run in another shell, anytime)
@@ -104,13 +124,31 @@ new commits, autopilot assumes something is wrong and halts. Common causes:
    gap because "done" is ambiguous. Tighten the wording.
 2. **The worker lacks a tool / MCP** needed to make progress. Inspect
    `.autopilot/events.jsonl` to confirm.
-3. **The worker prompt is too soft** on a specific failure mode. Edit
-   `src/prompts.ts` and re-run.
+3. **The worker prompt is too soft** on a specific failure mode.
 4. **A brittle external dependency** (test flake, rate limit) keeps undoing
-   progress. Inspect `.autopilot/iterations/NNNNNN/worker-transcript.md`.
+   progress.
 
 The written `.autopilot/STAGNATION_REPORT.md` lists these hypotheses against
 the recent history so you have a starting point.
+
+### Self-refinement (on by default)
+
+When stagnation fires, autopilot doesn't just exit — it spawns a fresh Claude
+Code session in the autopilot source repo with the stagnation report and the
+recent worker transcripts as context. That session's mandate: diagnose why
+autopilot got stuck and edit autopilot's own source (typically
+`src/prompts.ts` or `src/metrics.ts`) to fix it. It must make tests + build
+pass before committing, then pushes.
+
+Autopilot then runs `npm install && npm run build` on the (now refined)
+source, and spawns a fresh `autopilot run <target> --resume` as a child
+process that inherits stdio. The target run continues with the new binary,
+bounded by `--max-refinements` (default 3).
+
+This only activates when autopilot can find a writable git checkout of its
+own source via `import.meta.url`. If it's installed read-only from a
+registry, auto-refine is skipped and autopilot exits 3. You can always
+override with `--autopilot-source <path>`.
 
 ## Artifacts written per iteration
 

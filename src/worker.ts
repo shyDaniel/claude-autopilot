@@ -3,6 +3,7 @@ import { workerPrompt } from './prompts.js';
 import { log } from './logging.js';
 import type { EventLog } from './events.js';
 import type { StatusWriter } from './status.js';
+import { withModel, type ModelSelector } from './model.js';
 
 export interface WorkerArgs {
   repoPath: string;
@@ -10,7 +11,7 @@ export interface WorkerArgs {
   outstandingSummary: string;
   outstandingBullets: string[];
   noPush: boolean;
-  model?: string;
+  selector: ModelSelector;
   maxTurns?: number;
   events: EventLog;
   status: StatusWriter;
@@ -32,21 +33,6 @@ export async function runWorker(args: WorkerArgs): Promise<WorkerResult> {
     noPush: args.noPush,
   });
 
-  const options: Options = {
-    cwd: args.repoPath,
-    permissionMode: 'bypassPermissions',
-    ...(args.model ? { model: args.model } : {}),
-    ...(args.maxTurns ? { maxTurns: args.maxTurns } : {}),
-    systemPrompt: {
-      type: 'preset',
-      preset: 'claude_code',
-      append:
-        'You are running under claude-autopilot in a zero-human-in-the-loop loop. ' +
-        'Never ask clarifying questions. Spawn subagents or search the web instead. ' +
-        'Burn tokens. Ship production-grade work.',
-    },
-  };
-
   await args.events.emit({ iter: args.iteration, phase: 'worker', kind: 'start' });
 
   let turns = 0;
@@ -55,13 +41,29 @@ export async function runWorker(args: WorkerArgs): Promise<WorkerResult> {
   const transcript: string[] = [];
 
   try {
-    for await (const msg of query({ prompt, options })) {
-      turns += await handleMessage(msg, args, transcript);
-      if (msg.type === 'result') {
-        usage = (msg as unknown as { usage?: unknown }).usage;
-        finalText = (msg as unknown as { result?: string }).result ?? finalText;
+    await withModel(args.selector, async (model) => {
+      const options: Options = {
+        cwd: args.repoPath,
+        permissionMode: 'bypassPermissions',
+        model,
+        ...(args.maxTurns ? { maxTurns: args.maxTurns } : {}),
+        systemPrompt: {
+          type: 'preset',
+          preset: 'claude_code',
+          append:
+            'You are running under claude-autopilot in a zero-human-in-the-loop loop. ' +
+            'Never ask clarifying questions. Spawn subagents or search the web instead. ' +
+            'Burn tokens. Ship production-grade work.',
+        },
+      };
+      for await (const msg of query({ prompt, options })) {
+        turns += await handleMessage(msg, args, transcript);
+        if (msg.type === 'result') {
+          usage = (msg as unknown as { usage?: unknown }).usage;
+          finalText = (msg as unknown as { result?: string }).result ?? finalText;
+        }
       }
-    }
+    });
   } catch (err) {
     await args.events.emit({
       iter: args.iteration,
@@ -77,8 +79,8 @@ export async function runWorker(args: WorkerArgs): Promise<WorkerResult> {
     iter: args.iteration,
     phase: 'worker',
     kind: 'end',
-    msg: `turns=${turns}`,
-    data: { usage },
+    msg: `turns=${turns} model=${args.selector.current()}`,
+    data: { usage, model: args.selector.current(), downgraded: args.selector.isDowngraded() },
   });
 
   return { completedTurns: turns, usage, finalText, transcript: transcript.join('\n') };
