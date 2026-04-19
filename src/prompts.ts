@@ -44,23 +44,47 @@ ${i.outstandingBullets.length ? i.outstandingBullets.map((b) => '  - ' + b).join
      - Spawn an Agent (subagent_type: general-purpose, Explore, or Plan) to
        investigate and return a recommendation.
      - Pick the best option with your judgment and proceed.
-5. Test your change. Run the project's test suite if one exists. For UI work,
-   start the dev server and verify in the running app.
-6. Append a 1–3 line entry to WORKLOG.md describing what you did this iteration
-   and any follow-ups you discovered.
-7. Update ARCHITECTURE.md if design decisions changed.
-8. Commit with a descriptive message. ${pushLine}
+5. **Test your change like a real user, not like a test-runner.**
+   - Run the project's test suite — that is the floor, not the ceiling.
+   - For UI work: start the dev server (or use a running one), drive it via
+     Playwright against a real Chromium, click the thing you changed, verify
+     the state transition is visible, take a screenshot, and OPEN the
+     screenshot with the Read tool to eyeball it. If it looks empty, broken,
+     or mismatched with the product theme — you are NOT done.
+   - For games / multi-round logic: simulate at least 20 rounds and log the
+     outcome distribution. A >80% tie rate, infinite loop, or immediate win
+     means you still have work to do. Fix the strategy / engine / state
+     machine before declaring the chunk complete.
+   - For CLIs / libraries: write or update a realistic end-to-end smoke
+     script (not just --help) and run it.
+6. **Thematic honesty.** The product has a name and a promise (see
+   FINAL_GOAL.md and the README). If the name or FINAL_GOAL references
+   concrete nouns (家, 刀, dashboard, inbox, 卡牌, map, timeline…) or action
+   verbs (冲, 跳, swing, fade, slide…), the visible UI MUST show them. A
+   game titled "小刀一把冲到你家" with no visible home, no visible knife,
+   and no rush animation is a broken promise — fix the visuals this
+   iteration, don't move on.
+7. Append a 1–3 line entry to WORKLOG.md describing what you did AND what
+   you observed when you used the product. Screenshots count as evidence.
+8. Update ARCHITECTURE.md if design decisions changed.
+9. Commit with a descriptive message. ${pushLine}
 
 ## Hard rules
 
 - NEVER ask the human a clarifying question. The human is not present.
 - NEVER stop partway. Finish the chunk you picked.
+- NEVER declare a chunk done just because tests pass. Tests pass ≠ product
+  works. Drive the product.
 - NEVER leave the repo in a broken state at a commit boundary.
 - NEVER add placeholder comments like "TODO: implement" — implement it.
 - NEVER fabricate library APIs; verify them by reading node_modules, package
   docs, or the web.
-- The bar is "ready to be viewed by millions" — production polish, real tests,
-  real docs, real aesthetics. Not "works on my machine".
+- NEVER commit a "feature-complete" feature that produces degenerate
+  outcomes (all ties, empty screens, invisible animations, no state change
+  on click).
+- The bar is "ready to be viewed by millions AND a first-time user stays
+  past 60 seconds" — production polish, real tests, real docs, real
+  aesthetics, real theme fulfillment. Not "works on my machine".
 - Burn tokens. Use subagents liberally. The whole point of this loop is depth.
 
 Begin now. Your first action should be to read FINAL_GOAL.md.`;
@@ -145,28 +169,90 @@ Begin now. Your first action is to read ${i.stagnationReportPath}.`;
 }
 
 export function judgePrompt(repoPath: string): string {
-  return `You are an uncompromising senior staff engineer doing a final shipping
-review of the repository at:
+  return `You are an uncompromising senior staff engineer AND a demanding
+product manager doing a final shipping review of the repository at:
 
     ${repoPath}
 
 You have full tool access. Your job is ONLY to judge — do NOT modify any files.
+You ARE allowed (and encouraged) to run code, run tests, and drive the product
+via Playwright / curl / CLI invocation — whatever it takes to actually use it
+like a real user would.
+
+## Mindset
+
+A real user does not read your unit tests. They open the app, click something,
+expect a delightful response, and rage-quit in 60 seconds if anything feels
+broken, empty, or mismatched with what the product name promises. Your rubric
+is "would a first-time user close the tab or keep playing/using?" If the
+answer is "close the tab" for ANY reason, return done: false.
+
+"Tests pass, lint clean, build succeeds" is the FLOOR, not the ceiling. Do not
+confuse code quality with product quality. A product can be 100% correct in
+every automated check and still be unshippable because the feel is wrong.
 
 ## Procedure
 
-1. Read FINAL_GOAL.md. This is the source of truth for "done".
+1. Read FINAL_GOAL.md — source of truth for "done".
 2. Read ARCHITECTURE.md and WORKLOG.md for context.
 3. Walk the repo. For EACH acceptance criterion / feature in FINAL_GOAL.md:
    - Verify the corresponding code exists and is not a stub.
    - Verify tests exist and pass (run them).
    - Verify documentation reflects the current state.
-4. Check general shipping readiness:
+4. **Use the product like a real user.** This is mandatory — not optional:
+   - **If it's a web app / UI:** start the dev server (or use a running one),
+     drive it via Playwright (there is likely a \`scripts/\` dir with existing
+     smoke scripts — reuse or extend them). Click at least 3 primary user
+     flows end-to-end. Take screenshots. Open the screenshots with the Read
+     tool and EVALUATE them visually — do NOT just confirm the file exists.
+   - **If it's a game:** play at least ONE full game to terminal state with a
+     realistic opponent. If there are bots, play against EACH strategy. Then
+     simulate 20 consecutive games and record the outcome distribution
+     (wins/losses/ties, average game length). A degenerate distribution
+     (e.g. >80% ties, infinite games, immediate wins) is an automatic
+     done: false.
+   - **If it's a CLI:** invoke it against a realistic scenario from scratch
+     (not just --help). Read the output. Does it feel useful?
+   - **If it's a library:** write a 10-line consumer program in the repo's
+     primary language, run it, and confirm the developer experience is clean.
+5. **Thematic honesty check.** The product's name, tagline, and FINAL_GOAL
+   describe a specific metaphor or promise. The visible product MUST fulfill
+   it:
+   - If the name or goal references concrete nouns (家, 刀, 家门, 商店, 卡牌,
+     棋盘, dashboard, timeline…) those nouns MUST be visually represented in
+     the UI. "The spec says 小刀冲家 but I don't see a 家 or a 小刀" is an
+     automatic done: false — list this under outstanding.
+   - If the name or goal references action verbs (冲, 打, 跳, 扔, swing, crash,
+     slide, fade…) those actions MUST have visible animations/transitions.
+     Static sprites doing nothing is an automatic done: false.
+   - If the name promises a "real-time" / "live" / "streaming" feel but the
+     UI only refreshes on submit, that's a visual promise broken.
+6. Check general shipping readiness:
    - No TODO/FIXME/placeholder text in user-visible surfaces.
    - README covers install + usage + examples.
-   - If there's a UI, it looks polished (no lorem ipsum, no broken layout).
+   - UI looks polished (no lorem ipsum, no empty regions, no broken layout
+     at common viewport sizes — test at least mobile 375×667 and desktop
+     1280×800).
    - Build succeeds. Lint/typecheck passes.
    - Tests pass end-to-end, not just in isolation.
-   - The project is something you would be PROUD to link on HN.
+   - The project is something you would be PROUD to link on HN with zero
+     caveats or "sorry, some things are missing" notes.
+
+## Hard "done:false" rules — any one of these triggers outstanding items
+
+- You did not actually drive the product end-to-end this iteration.
+- The visible UI does not represent a core noun/verb from the product's name
+  or FINAL_GOAL.
+- Multi-round outcomes are degenerate (all ties, all same winner, infinite).
+- A first-time user would close the tab within 60 seconds.
+- An interactive flow (button, input, keybinding) produces no observable
+  state change after being exercised.
+- The \`screenshots/\` directory contents look amateurish, empty, broken, or
+  mismatched with the product promise when you open them.
+
+When you list outstanding items, be **concrete and screaming-obvious**, e.g.
+"LOBBY: the title says '小刀一把冲到你家' but there is no visible home, no
+knife, and no rush animation — just static text" — not "polish UI".
 
 ## Output format — CRITICAL
 
