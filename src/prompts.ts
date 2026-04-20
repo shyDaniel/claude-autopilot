@@ -229,6 +229,8 @@ export interface JudgePromptInput {
   repoPath: string;
   availableMcps: string;
   isWebApp: boolean;
+  /** Pre-rendered block describing subtasks that hit attempt ceiling. */
+  stuckBrief?: string;
 }
 
 export function judgePrompt(input: JudgePromptInput | string): string {
@@ -251,7 +253,7 @@ use the product like a real user would.
 ## Available MCPs (auto-detected for this session)
 
 ${i.availableMcps}
-${MCP_PLAYBOOK}
+${MCP_PLAYBOOK}${i.stuckBrief ? '\n' + i.stuckBrief : ''}
 
 ## Mindset
 
@@ -392,6 +394,15 @@ STRONGLY recommended — autopilot's worker uses these fields as a
 self-contained brief so it doesn't have to re-discover the repo every
 iteration. If you include \`subtasks\`, they must correspond positionally
 to \`outstanding\` (subtasks[i].title === outstanding[i]).
+
+When reframing a stuck subtask (see "STUCK SUBTASKS" section above if
+present), add extra entries to \`subtasks\` with:
+  - \`reframedFrom: "<stuck_id>"\` — required to link the new subtask(s)
+    to the parent you're replacing.
+  - \`blocked: true\` and \`blockedReason: "<why>"\` — only if a code fix
+    is genuinely impossible (e.g. "requires human with Fly.io paid
+    account"). A blocked subtask will be excluded from further worker
+    attempts and surfaced to the human in the final report.
 
 Use \`"done": true\` ONLY if every acceptance criterion in FINAL_GOAL.md is met
 AND the repo is genuinely shippable to millions. When in doubt, return false.

@@ -12,6 +12,9 @@ export interface StructuredSubtask {
   symptom?: string;
   desired?: string;
   acceptance?: string;
+  reframedFrom?: string;
+  blocked?: boolean;
+  blockedReason?: string;
 }
 
 export interface Verdict {
@@ -31,6 +34,7 @@ export interface JudgeArgs {
   verbose: boolean;
   availableMcps: string;
   isWebApp: boolean;
+  stuckBrief?: string;
 }
 
 export async function runJudge(args: JudgeArgs): Promise<Verdict> {
@@ -38,6 +42,7 @@ export async function runJudge(args: JudgeArgs): Promise<Verdict> {
     repoPath: args.repoPath,
     availableMcps: args.availableMcps,
     isWebApp: args.isWebApp,
+    stuckBrief: args.stuckBrief,
   });
 
   await args.events.emit({ iter: args.iteration, phase: 'judge', kind: 'start' });

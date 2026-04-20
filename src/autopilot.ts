@@ -38,11 +38,12 @@ import {
   savePlan,
   reconcilePlan,
   pickNextSubtask,
-  markExhaustedAsFailed,
+  markExhaustedAsNeedsReframe,
+  collectStuckSubtasks,
+  renderStuckBrief,
   planSummary,
   renderSubtaskBrief,
   type Plan,
-  type Subtask,
 } from './planner.js';
 
 export interface AutopilotOptions {
@@ -183,6 +184,15 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
     const iterStart = Date.now();
     const beforeSnap = snapshotRepo(repo);
 
+    // If any subtask hit the retry ceiling on a previous iteration, it's
+    // flagged needs_reframe. Hand those to the judge so it decomposes /
+    // reframes / blocks them this round instead of just leaving them.
+    const stuckSubtasks = plan ? collectStuckSubtasks(plan) : [];
+    const stuckBrief = renderStuckBrief(stuckSubtasks);
+    if (stuckSubtasks.length > 0) {
+      log.info(`judge: ${stuckSubtasks.length} stuck subtask(s) will be sent for reframe`);
+    }
+
     let verdict: Verdict;
     try {
       log.step(`judge: evaluating repo state (model=${judgeSelector.current()})`);
@@ -196,6 +206,7 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
         verbose: opts.verbose,
         availableMcps: mcpSection,
         isWebApp,
+        stuckBrief: stuckBrief || undefined,
       });
     } catch (err) {
       consecutiveErrors += 1;
@@ -286,18 +297,23 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
 
     // Reconcile the persistent plan ledger with the latest verdict.
     plan = reconcilePlan(plan, verdict.outstanding, verdict.subtasks, state.iteration, lastWorkedOnId);
-    const newlyFailed = markExhaustedAsFailed(plan, opts.maxSubtaskAttempts);
+    // Exhausted subtasks flip to needs_reframe (NOT failed) — next judge
+    // iteration is required to decompose/reframe/block them.
+    const newlyStuck = markExhaustedAsNeedsReframe(plan, opts.maxSubtaskAttempts);
     const summary = planSummary(plan);
     log.info(
-      `plan: ${summary.pending} pending · ${summary.in_progress} in_progress · ${summary.completed} completed · ${summary.failed} failed (of ${summary.total})`,
+      `plan: ${summary.pending} pending · ${summary.in_progress} in_progress · ` +
+        `${summary.completed} completed · ${summary.needs_reframe} needs_reframe · ` +
+        `${summary.reframed} reframed · ${summary.blocked} blocked · ${summary.failed} failed ` +
+        `(of ${summary.total})`,
     );
-    if (newlyFailed.length > 0) {
-      log.warn(`subtask(s) hit max attempts (${opts.maxSubtaskAttempts}) and were marked failed: ${newlyFailed.join(', ')}`);
+    if (newlyStuck.length > 0) {
+      log.warn(`subtask(s) hit max attempts (${opts.maxSubtaskAttempts}) and will be sent to judge for reframe: ${newlyStuck.join(', ')}`);
       await events.emit({
         iter: state.iteration,
         phase: 'loop',
         kind: 'error',
-        msg: `subtasks failed after ${opts.maxSubtaskAttempts} attempts: ${newlyFailed.join(', ')}`,
+        msg: `subtasks flipped to needs_reframe after ${opts.maxSubtaskAttempts} attempts: ${newlyStuck.join(', ')}`,
       });
     }
 

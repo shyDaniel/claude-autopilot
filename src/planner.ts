@@ -2,7 +2,18 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { normalizeBullet } from './metrics.js';
 
-export type SubtaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+export type SubtaskStatus =
+  | 'pending'
+  | 'in_progress'
+  | 'completed'
+  /** Hit attempt ceiling — next judge iteration must decompose/reframe/block. */
+  | 'needs_reframe'
+  /** Superseded by a child subtask (decomposition or reframing). */
+  | 'reframed'
+  /** Genuinely impossible to code-fix (judge marked it). */
+  | 'blocked'
+  /** Exhausted retries even after reframing. */
+  | 'failed';
 
 export interface StructuredSubtask {
   title?: string;
@@ -10,6 +21,10 @@ export interface StructuredSubtask {
   symptom?: string;
   desired?: string;
   acceptance?: string;
+  /** Judge's signal: this subtask replaces/decomposes a stuck one. */
+  reframedFrom?: string;
+  blocked?: boolean;
+  blockedReason?: string;
 }
 
 export interface Subtask {
@@ -26,7 +41,16 @@ export interface Subtask {
   lastAttemptIteration?: number;
   completedAtIteration?: number;
   failureReason?: string;
+  /** The parent subtask id this one was reframed/decomposed from. */
+  reframedFrom?: string;
+  /** Generation — original subtasks have depth 0, reframes add 1. */
+  reframeDepth: number;
+  /** Populated when status === 'blocked'. */
+  blockedReason?: string;
 }
+
+/** How many times a lineage can be reframed before we give up for real. */
+export const MAX_REFRAME_DEPTH = 2;
 
 export interface Plan {
   version: 1;
@@ -91,8 +115,10 @@ export function reconcilePlan(
   const base: Plan = prior ? { ...prior, subtasks: prior.subtasks.map((s) => ({ ...s })) } : freshPlan();
   base.updatedAt = new Date().toISOString();
 
+  const priorById = new Map(base.subtasks.map((s) => [s.id, s]));
   const priorByKey = new Map(base.subtasks.map((s) => [s.normalizedKey, s]));
   const seenKeys = new Set<string>();
+  const reframedParentIds = new Set<string>();
 
   const nextSubtasks: Subtask[] = [];
   for (let idx = 0; idx < outstanding.length; idx++) {
@@ -100,22 +126,56 @@ export function reconcilePlan(
     const key = normalizeBullet(text);
     if (!key) continue;
     const enrich = structured?.[idx];
+
+    // Case A: judge is replacing/decomposing a stuck parent.
+    if (enrich?.reframedFrom) {
+      const parent = priorById.get(enrich.reframedFrom);
+      if (parent) {
+        reframedParentIds.add(parent.id);
+        const depth = parent.reframeDepth + 1;
+        const exceedsDepth = depth > MAX_REFRAME_DEPTH;
+        const blocked = Boolean(enrich.blocked);
+        const child: Subtask = {
+          id: nextId({ ...base, subtasks: [...base.subtasks, ...nextSubtasks] }),
+          text,
+          normalizedKey: key,
+          files: enrich.files,
+          symptom: enrich.symptom,
+          desired: enrich.desired,
+          acceptance: enrich.acceptance,
+          status: blocked ? 'blocked' : exceedsDepth ? 'failed' : 'pending',
+          attempts: 0,
+          firstSeenIteration: iteration,
+          reframedFrom: parent.id,
+          reframeDepth: depth,
+          blockedReason: blocked ? (enrich.blockedReason ?? 'marked blocked by judge') : undefined,
+          failureReason: exceedsDepth ? `max reframe depth (${MAX_REFRAME_DEPTH}) exceeded` : undefined,
+        };
+        seenKeys.add(key);
+        nextSubtasks.push(child);
+        continue;
+      }
+      // parent not found → fall through to normal handling
+    }
+
+    // Case B: normal flow — match by normalized key.
     const existing = priorByKey.get(key);
     if (existing) {
       seenKeys.add(key);
-      // Bump attempt if we just worked on this and judge still flags it.
       if (lastWorkedOnId && existing.id === lastWorkedOnId) {
         existing.attempts += 1;
         existing.lastAttemptIteration = iteration;
       }
-      // Prefer fresh enrichment from the judge when provided.
       if (enrich) {
         if (enrich.files?.length) existing.files = enrich.files;
         if (enrich.symptom) existing.symptom = enrich.symptom;
         if (enrich.desired) existing.desired = enrich.desired;
         if (enrich.acceptance) existing.acceptance = enrich.acceptance;
+        if (enrich.blocked) {
+          existing.status = 'blocked';
+          existing.blockedReason = enrich.blockedReason ?? 'marked blocked by judge';
+        }
       }
-      // If it was 'in_progress' and still outstanding, flip back to pending.
       if (existing.status === 'in_progress') existing.status = 'pending';
       nextSubtasks.push(existing);
     } else {
@@ -128,21 +188,30 @@ export function reconcilePlan(
         symptom: enrich?.symptom,
         desired: enrich?.desired,
         acceptance: enrich?.acceptance,
-        status: 'pending',
+        status: enrich?.blocked ? 'blocked' : 'pending',
         attempts: 0,
         firstSeenIteration: iteration,
+        reframeDepth: 0,
+        blockedReason: enrich?.blocked ? (enrich.blockedReason ?? 'marked blocked by judge') : undefined,
       };
       nextSubtasks.push(fresh);
     }
   }
 
-  // Any prior subtask NOT in the new outstanding list → completed.
+  // Carry forward prior subtasks that didn't match anything this round.
   for (const prev of base.subtasks) {
     if (seenKeys.has(prev.normalizedKey)) continue;
-    if (prev.status === 'failed') {
-      nextSubtasks.push(prev); // preserve failed markers
+    if (reframedParentIds.has(prev.id)) {
+      // Stuck parent: judge replaced it. Mark as reframed, retain as history.
+      nextSubtasks.push({ ...prev, status: 'reframed' });
       continue;
     }
+    // Terminal statuses carry over as-is.
+    if (prev.status === 'failed' || prev.status === 'reframed' || prev.status === 'blocked') {
+      nextSubtasks.push(prev);
+      continue;
+    }
+    // Otherwise, judge no longer flags it → completed.
     nextSubtasks.push({
       ...prev,
       status: 'completed',
@@ -172,19 +241,63 @@ export function pickNextSubtask(plan: Plan, maxAttempts: number): Subtask | null
 }
 
 /**
- * Mark all pending subtasks that have hit the retry ceiling as `failed`.
- * Returns the ids that transitioned this call.
+ * Flip pending subtasks that have hit the retry ceiling into
+ * `needs_reframe`. The next judge iteration is expected to decompose,
+ * reframe, or mark them blocked — NOT just leave them stuck. Real `failed`
+ * status only occurs when MAX_REFRAME_DEPTH is exceeded.
  */
-export function markExhaustedAsFailed(plan: Plan, maxAttempts: number): string[] {
+export function markExhaustedAsNeedsReframe(plan: Plan, maxAttempts: number): string[] {
   const transitioned: string[] = [];
   for (const s of plan.subtasks) {
     if (s.status === 'pending' && s.attempts >= maxAttempts) {
-      s.status = 'failed';
-      s.failureReason = `exceeded max attempts (${maxAttempts})`;
+      s.status = 'needs_reframe';
       transitioned.push(s.id);
     }
   }
   return transitioned;
+}
+
+/**
+ * Subtasks the judge needs to reframe this iteration. Returned with a
+ * compact reference block the judge prompt can drop in verbatim.
+ */
+export function collectStuckSubtasks(plan: Plan): Subtask[] {
+  return plan.subtasks.filter((s) => s.status === 'needs_reframe');
+}
+
+export function renderStuckBrief(stuck: Subtask[]): string {
+  if (stuck.length === 0) return '';
+  const lines: string[] = [];
+  lines.push('## STUCK SUBTASKS — you MUST reframe, decompose, or block each of these');
+  lines.push('');
+  lines.push(
+    `The worker has tried each of these ${stuck.length} subtask${stuck.length === 1 ? '' : 's'} ` +
+      `the maximum number of times without clearing them. Walking away is NOT ` +
+      `acceptable. For each stuck subtask, your verdict's \`subtasks\` array MUST ` +
+      `include one or more NEW entries with \`reframedFrom: "<stuck_id>"\` that ` +
+      `EITHER (a) decompose it into 2–3 smaller subtasks with sharper files / ` +
+      `symptom / desired / acceptance, OR (b) reframe it as a single subtask ` +
+      `with different framing, OR (c) mark it \`blocked: true\` with a concrete ` +
+      `\`blockedReason\` (only if a code fix is genuinely impossible, e.g. ` +
+      `requires a human with external account access).`,
+  );
+  lines.push('');
+  for (const s of stuck) {
+    lines.push(`- **${s.id}** (attempts: ${s.attempts}, reframeDepth: ${s.reframeDepth}):`);
+    lines.push(`    text: ${s.text}`);
+    if (s.files?.length) lines.push(`    files: ${s.files.join(', ')}`);
+    if (s.symptom) lines.push(`    symptom: ${s.symptom}`);
+    if (s.desired) lines.push(`    desired: ${s.desired}`);
+    if (s.acceptance) lines.push(`    acceptance: ${s.acceptance}`);
+    if (s.lastAttemptIteration) {
+      lines.push(
+        `    last attempted: iteration ${s.lastAttemptIteration} ` +
+          `(transcript: .autopilot/iterations/${String(s.lastAttemptIteration).padStart(6, '0')}/worker-transcript.md)`,
+      );
+    }
+  }
+  lines.push('');
+  return lines.join('\n');
 }
 
 /**
@@ -194,10 +307,22 @@ export function planSummary(plan: Plan): {
   pending: number;
   in_progress: number;
   completed: number;
+  needs_reframe: number;
+  reframed: number;
+  blocked: number;
   failed: number;
   total: number;
 } {
-  const counts = { pending: 0, in_progress: 0, completed: 0, failed: 0, total: plan.subtasks.length };
+  const counts = {
+    pending: 0,
+    in_progress: 0,
+    completed: 0,
+    needs_reframe: 0,
+    reframed: 0,
+    blocked: 0,
+    failed: 0,
+    total: plan.subtasks.length,
+  };
   for (const s of plan.subtasks) counts[s.status] += 1;
   return counts;
 }
