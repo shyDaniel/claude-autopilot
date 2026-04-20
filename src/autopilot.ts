@@ -32,7 +32,7 @@ import {
 } from './notifier.js';
 import { detectStartCmd, startService, type ServiceHandle } from './service.js';
 import { printBanner, writeFinalReport } from './finalReport.js';
-import { detectAvailableMcps, looksLikeWebApp, renderMcpSection } from './mcp.js';
+import { detectAvailableMcps, looksLikeWebApp, renderMcpSection, resolveMcpServers } from './mcp.js';
 import {
   loadPlan,
   savePlan,
@@ -95,8 +95,9 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
   const availableMcps = detectAvailableMcps(repo);
   const isWebApp = looksLikeWebApp(repo);
   const mcpSection = renderMcpSection(availableMcps, isWebApp);
+  const mcpServers = resolveMcpServers(repo);
   log.info(
-    `MCPs detected: ${availableMcps.length === 0 ? '(none)' : availableMcps.map((m) => m.name).join(', ')}` +
+    `MCPs injected into every session: ${Object.keys(mcpServers).sort().join(', ') || '(none)'}` +
       (isWebApp ? '  [web app detected]' : ''),
   );
 
@@ -207,6 +208,7 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
         availableMcps: mcpSection,
         isWebApp,
         stuckBrief: stuckBrief || undefined,
+        mcpServers,
       });
     } catch (err) {
       consecutiveErrors += 1;
@@ -358,6 +360,7 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
         availableMcps: mcpSection,
         isWebApp,
         subtaskBrief: nextSubtask ? renderSubtaskBrief(nextSubtask) : undefined,
+        mcpServers,
       });
       workerTranscript = result.transcript;
       consecutiveErrors = 0;

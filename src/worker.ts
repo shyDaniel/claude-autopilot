@@ -5,6 +5,7 @@ import type { EventLog } from './events.js';
 import type { StatusWriter } from './status.js';
 import { withModel, type ModelSelector } from './model.js';
 import { printMessage } from './transcript.js';
+import type { McpServerConfig } from './mcp.js';
 
 export interface WorkerArgs {
   repoPath: string;
@@ -20,6 +21,7 @@ export interface WorkerArgs {
   availableMcps: string;
   isWebApp: boolean;
   subtaskBrief?: string;
+  mcpServers: Record<string, McpServerConfig>;
 }
 
 export interface WorkerResult {
@@ -54,6 +56,7 @@ export async function runWorker(args: WorkerArgs): Promise<WorkerResult> {
         cwd: args.repoPath,
         permissionMode: 'bypassPermissions',
         model,
+        mcpServers: args.mcpServers,
         ...(args.maxTurns ? { maxTurns: args.maxTurns } : {}),
         systemPrompt: {
           type: 'preset',

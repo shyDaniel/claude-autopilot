@@ -5,6 +5,7 @@ import type { EventLog } from './events.js';
 import type { StatusWriter } from './status.js';
 import { withModel, type ModelSelector } from './model.js';
 import { printMessage } from './transcript.js';
+import type { McpServerConfig } from './mcp.js';
 
 export interface StructuredSubtask {
   title?: string;
@@ -35,6 +36,7 @@ export interface JudgeArgs {
   availableMcps: string;
   isWebApp: boolean;
   stuckBrief?: string;
+  mcpServers: Record<string, McpServerConfig>;
 }
 
 export async function runJudge(args: JudgeArgs): Promise<Verdict> {
@@ -55,6 +57,7 @@ export async function runJudge(args: JudgeArgs): Promise<Verdict> {
         permissionMode: 'bypassPermissions',
         disallowedTools: ['Write', 'Edit', 'NotebookEdit'],
         model,
+        mcpServers: args.mcpServers,
         ...(args.maxTurns ? { maxTurns: args.maxTurns } : {}),
         systemPrompt: {
           type: 'preset',
