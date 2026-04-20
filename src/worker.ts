@@ -17,6 +17,8 @@ export interface WorkerArgs {
   events: EventLog;
   status: StatusWriter;
   verbose: boolean;
+  availableMcps: string;
+  isWebApp: boolean;
 }
 
 export interface WorkerResult {
@@ -33,6 +35,8 @@ export async function runWorker(args: WorkerArgs): Promise<WorkerResult> {
     outstandingSummary: args.outstandingSummary,
     outstandingBullets: args.outstandingBullets,
     noPush: args.noPush,
+    availableMcps: args.availableMcps,
+    isWebApp: args.isWebApp,
   });
 
   await args.events.emit({ iter: args.iteration, phase: 'worker', kind: 'start' });

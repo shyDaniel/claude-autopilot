@@ -1,6 +1,6 @@
 {
   "name": "claude-autopilot",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "Autonomous wrapper that runs Claude Code in an infinite loop on any repo until FINAL_GOAL.md is fully satisfied — zero human in the loop.",
   "type": "module",
   "bin": {

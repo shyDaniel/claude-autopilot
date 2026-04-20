@@ -32,6 +32,7 @@ import {
 } from './notifier.js';
 import { detectStartCmd, startService, type ServiceHandle } from './service.js';
 import { printBanner, writeFinalReport } from './finalReport.js';
+import { detectAvailableMcps, looksLikeWebApp, renderMcpSection } from './mcp.js';
 
 export interface AutopilotOptions {
   repo: string;
@@ -77,6 +78,14 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
     commitsSinceStart: 0,
   });
   await status.update({});
+
+  const availableMcps = detectAvailableMcps(repo);
+  const isWebApp = looksLikeWebApp(repo);
+  const mcpSection = renderMcpSection(availableMcps, isWebApp);
+  log.info(
+    `MCPs detected: ${availableMcps.length === 0 ? '(none)' : availableMcps.map((m) => m.name).join(', ')}` +
+      (isWebApp ? '  [web app detected]' : ''),
+  );
 
   const notifier = new Notifier(loadNotifierConfig(opts.emailDisabled));
   const bigProgressState: BigProgressState = { baseline: null, prev: null };
@@ -171,6 +180,8 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
         events,
         status,
         verbose: opts.verbose,
+        availableMcps: mcpSection,
+        isWebApp,
       });
     } catch (err) {
       consecutiveErrors += 1;
@@ -282,6 +293,8 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
         events,
         status,
         verbose: opts.verbose,
+        availableMcps: mcpSection,
+        isWebApp,
       });
       workerTranscript = result.transcript;
       consecutiveErrors = 0;

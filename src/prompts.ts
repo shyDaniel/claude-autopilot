@@ -1,9 +1,48 @@
+const MCP_PLAYBOOK = `
+## MCP playbook (use what's available, hard-fail if what's needed is missing)
+
+This is the heart of the rubric. Product-quality validation happens through
+MCPs, not through running tests. For every check you want to make, pick the
+right MCP and call its tools — do not fall back to writing ad-hoc shell
+scripts when an MCP is configured.
+
+| Goal of the check                       | Preferred MCP   | Representative tool calls                                  |
+| --------------------------------------- | --------------- | ---------------------------------------------------------- |
+| Click through UI, eyeball screenshots   | playwright      | \`browser_navigate\`, \`browser_click\`, \`browser_take_screenshot\`, \`browser_snapshot\`, \`browser_wait_for\` — then OPEN the screenshot with Read and reason about what you see |
+| Measure animation / frame timing        | chrome-devtools | \`performance_start_trace\`, \`performance_stop_trace\`, \`performance_analyze_insight\` — read real ms, don't guess |
+| Network / console / JS errors at runtime| chrome-devtools | \`list_network_requests\`, \`list_console_messages\`, \`evaluate_script\` |
+| Multi-user / concurrent session flows   | browserbase     | open N sessions, act as N users simultaneously (matchmaking, chat, multiplayer) |
+| Accessibility (contrast, roles, labels) | axe             | \`run_axe\` on the rendered page                           |
+| Lighthouse scores (LCP, INP, CLS)       | lighthouse      | \`run_audit\` against the running dev server               |
+| DB state after a write                  | postgres/sqlite | \`query\` to confirm side effects                          |
+
+**Rules of engagement:**
+
+1. After every interactive step (click, type, submit), take a screenshot
+   and OPEN it with Read. React to what is actually rendered, not what
+   you assumed would happen. This is how you perceive animation glitches,
+   empty regions, broken layouts, and "flash-by" issues that unit tests
+   miss by construction.
+2. Prefer MCP tools over writing Playwright/Puppeteer scripts when an
+   MCP is available. MCPs give structured feedback and screenshots per
+   step; hand-written scripts don't.
+3. If a check you need requires an MCP that is not configured, list it
+   as outstanding with exact wording:
+   "MCP '{name}' not configured — required to validate {feature}. Add
+   to .mcp.json: {snippet}".
+4. Never claim "verified visually" without a screenshot that was actually
+   opened and described. Never claim "animation feels right" without
+   either a chrome-devtools perf trace or a 100ms screenshot sample.
+`;
+
 export interface WorkerPromptInput {
   repoPath: string;
   iteration: number;
   outstandingSummary: string;
   outstandingBullets: string[];
   noPush: boolean;
+  availableMcps: string;
+  isWebApp: boolean;
 }
 
 export function workerPrompt(i: WorkerPromptInput): string {
@@ -18,6 +57,11 @@ export function workerPrompt(i: WorkerPromptInput): string {
 You have UNLIMITED time, UNLIMITED tokens, and every tool that Claude Code offers
 — Read, Write, Edit, Bash, Grep, Glob, WebSearch, WebFetch, every configured MCP
 server, and the Agent tool for spawning subagents.
+
+## Available MCPs (auto-detected for this session)
+
+${i.availableMcps}
+${MCP_PLAYBOOK}
 
 This is iteration ${i.iteration} of an autonomous loop. Previous iterations have
 already run. A separate "judge" Claude has just evaluated the repo and reports:
@@ -177,16 +221,33 @@ autopilot so that when it relaunches, it will make progress.
 Begin now. Your first action is to read ${i.stagnationReportPath}.`;
 }
 
-export function judgePrompt(repoPath: string): string {
+export interface JudgePromptInput {
+  repoPath: string;
+  availableMcps: string;
+  isWebApp: boolean;
+}
+
+export function judgePrompt(input: JudgePromptInput | string): string {
+  // Back-compat: some call sites still pass just the repoPath string.
+  const i: JudgePromptInput =
+    typeof input === 'string'
+      ? { repoPath: input, availableMcps: '(unknown — caller did not detect)', isWebApp: false }
+      : input;
+
   return `You are an uncompromising senior staff engineer AND a demanding
 product manager doing a final shipping review of the repository at:
 
-    ${repoPath}
+    ${i.repoPath}
 
 You have full tool access. Your job is ONLY to judge — do NOT modify any files.
 You ARE allowed (and encouraged) to run code, run tests, and drive the product
-via Playwright / curl / CLI invocation — whatever it takes to actually use it
-like a real user would.
+via MCPs / Playwright / curl / CLI invocation — whatever it takes to actually
+use the product like a real user would.
+
+## Available MCPs (auto-detected for this session)
+
+${i.availableMcps}
+${MCP_PLAYBOOK}
 
 ## Mindset
 
@@ -275,7 +336,18 @@ every automated check and still be unshippable because the feel is wrong.
 
 ## Hard "done:false" rules — any one of these triggers outstanding items
 
-- You did not actually drive the product end-to-end this iteration.
+- **MCP gap:** this product needs a browser MCP (web UI) or other specialty
+  MCP (multi-user → browserbase, perf → chrome-devtools, etc.) but it isn't
+  configured in \`.mcp.json\` or the global Claude Code config. List the
+  specific MCP as outstanding #1 with an exact install snippet — the
+  autopilot cannot validate properly without it, and shipping anyway is
+  negligence.
+- You had MCPs available but did not use them — e.g. Playwright MCP was
+  configured but you wrote ad-hoc Playwright scripts instead. That's
+  rejected. MCPs are mandatory when available.
+- You did not actually drive the product end-to-end this iteration (no
+  screenshot opened with Read, no real session exercised, no real verdict
+  on the lived experience).
 - The visible UI does not represent a core noun/verb from the product's name
   or FINAL_GOAL.
 - Multi-round outcomes are degenerate (all ties, all same winner, infinite).

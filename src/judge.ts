@@ -20,10 +20,16 @@ export interface JudgeArgs {
   events: EventLog;
   status: StatusWriter;
   verbose: boolean;
+  availableMcps: string;
+  isWebApp: boolean;
 }
 
 export async function runJudge(args: JudgeArgs): Promise<Verdict> {
-  const prompt = judgePrompt(args.repoPath);
+  const prompt = judgePrompt({
+    repoPath: args.repoPath,
+    availableMcps: args.availableMcps,
+    isWebApp: args.isWebApp,
+  });
 
   await args.events.emit({ iter: args.iteration, phase: 'judge', kind: 'start' });
 
