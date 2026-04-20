@@ -114,17 +114,31 @@ ${i.subtaskBrief ?? '## THIS ITERATION\'S SUBTASK\n\n(No structured brief was as
      machine before declaring the chunk complete.
    - For CLIs / libraries: write or update a realistic end-to-end smoke
      script (not just --help) and run it.
-6. **Thematic honesty.** The product has a name and a promise (see
-   FINAL_GOAL.md and the README). If the name or FINAL_GOAL references
-   concrete nouns (家, 刀, dashboard, inbox, 卡牌, map, timeline…) or action
-   verbs (冲, 跳, swing, fade, slide…), the visible UI MUST show them. A
-   game titled "小刀一把冲到你家" with no visible home, no visible knife,
-   and no rush animation is a broken promise — fix the visuals this
-   iteration, don't move on.
-7. Append a 1–3 line entry to WORKLOG.md describing what you did AND what
+6. **Thematic honesty — literal, not abstract.** The product has a
+   name and a promise. If the name or FINAL_GOAL references concrete
+   nouns (家, 刀, dashboard, inbox, 卡牌, map, timeline…) or action
+   verbs (冲, 跳, swing, fade, slide…), the visible UI MUST show them
+   LITERALLY. A button labeled "冲" that updates a number is NOT "冲".
+   A game titled "小刀一把冲到你家" MUST show: the opponent's home
+   (with door/windows/roof visible), the character traveling across
+   the stage to that home, the knife striking, and damage visible on
+   the home afterward. Abstract representation is rejected. Implement
+   the exact scene the name describes.
+
+7. **Viral aesthetic — the UI IS the product for games / consumer
+   apps.** Every meaningful action must have a transition ≥ 500ms, a
+   sound effect, and a visual flourish (particle / shake / flash /
+   easing). Round-based narration must hold ≥ 2s with colloquial
+   human-readable text (e.g. "你一刀砍在小明家门框上", NOT "WIN"). No
+   empty colored-rectangle regions, no default CSS buttons, no
+   debug/lorem text visible. When you screenshot your work, compare it
+   mentally to Balatro / Slay the Spire / Cookie Clicker / Pico-8
+   demos — if yours looks amateur next to those, it is. Fix it THIS
+   iteration before moving on.
+8. Append a 1–3 line entry to WORKLOG.md describing what you did AND what
    you observed when you used the product. Screenshots count as evidence.
-8. Update ARCHITECTURE.md if design decisions changed.
-9. Commit with a descriptive message. ${pushLine}
+9. Update ARCHITECTURE.md if design decisions changed.
+10. Commit with a descriptive message. ${pushLine}
 
 ## Hard rules
 
@@ -339,6 +353,60 @@ every automated check and still be unshippable because the feel is wrong.
    - Tests pass end-to-end, not just in isolation.
    - The project is something you would be PROUD to link on HN with zero
      caveats or "sorry, some things are missing" notes.
+
+## VIRAL AESTHETIC GATE — for any product where the UI *is* the product
+
+If FINAL_GOAL.md describes a consumer product (game, creative tool,
+marketing site, social app, entertainment, portfolio, anything meant to
+be **shared**), functional correctness is NOT the bar. The bar is:
+
+> Would a first-time viewer **take a screenshot and send it to a friend**?
+
+If the answer is "no", you return done: false regardless of how green the
+tests are. Concretely, for games and playful consumer products, EVERY
+ONE of the following must hold before you can return done: true:
+
+1. **Literal theme embodiment.** The product's name or tagline describes
+   a specific image or action — implement it LITERALLY, not abstractly.
+   If the name is "小刀一把冲到你家", the opponent's 家 (house with
+   door/windows/roof) must be on-screen, and an attack must show the
+   character **actually traveling** across the stage to that house
+   before the hit resolves. A button that says "Attack" and changes a
+   number is NOT "冲到你家" — that is a tech demo, not this product.
+
+2. **Scene composition.** The stage has a proper background + foreground
+   + characters + props. At least three distinct visual elements. Empty
+   colored-rectangle regions are a fail. Default-CSS buttons are a fail.
+   If any element looks like it's from a Tailwind starter, it's a fail.
+
+3. **Juice / feel.** Every meaningful action must have:
+     - A transition that lasts ≥ 500ms (never cut between states)
+     - A sound effect (zzfx / WebAudio / audio file)
+     - A visual flourish: particle burst, screen shake, flash, squash-
+       and-stretch, easing — SOMETHING beyond a CSS property change
+
+4. **Readable narration / state.** For round-based / turn-based
+   products: each round's result must hold on-screen for ≥ 2 seconds
+   with a colloquial, human-readable description of what happened
+   (e.g. "你一刀砍在小明家门上, 小明闪身躲过" — NOT "WIN" / "LOSE" /
+   "ROCK beats SCISSORS"). The player must be able to read what just
+   happened without pausing or re-playing.
+
+5. **Pixel / asset quality.** If it's pixel art, characters are ≥ 32×32,
+   props are ≥ 64×64, colors come from a cohesive palette of ≤ 32 hues.
+   If it's vector/SVG, strokes are consistent and animations use eased
+   timing. No placeholder rectangles, no lorem ipsum, no debug text
+   visible.
+
+6. **Mental reference check.** When you open a screenshot, compare it
+   mentally to products that went viral on HN / Reddit / Twitter
+   (Balatro, Slay the Spire, Cookie Clicker, Vampire Survivors,
+   Townscaper, Pico-8 demos). If your product looks amateur next to
+   those, it is amateur. Say so explicitly in the outstanding list.
+
+This gate applies ON TOP of all other checks — a product can pass every
+other rubric and still fail here. Be honest with the human. Tell them
+precisely what is ugly, flat, or themeless.
 
 ## Hard "done:false" rules — any one of these triggers outstanding items
 
