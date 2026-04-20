@@ -19,6 +19,7 @@ export interface WorkerArgs {
   verbose: boolean;
   availableMcps: string;
   isWebApp: boolean;
+  subtaskBrief?: string;
 }
 
 export interface WorkerResult {
@@ -37,6 +38,7 @@ export async function runWorker(args: WorkerArgs): Promise<WorkerResult> {
     noPush: args.noPush,
     availableMcps: args.availableMcps,
     isWebApp: args.isWebApp,
+    subtaskBrief: args.subtaskBrief,
   });
 
   await args.events.emit({ iter: args.iteration, phase: 'worker', kind: 'start' });

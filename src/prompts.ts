@@ -43,6 +43,8 @@ export interface WorkerPromptInput {
   noPush: boolean;
   availableMcps: string;
   isWebApp: boolean;
+  /** Self-contained brief for the one subtask this iteration should tackle. */
+  subtaskBrief?: string;
 }
 
 export function workerPrompt(i: WorkerPromptInput): string {
@@ -71,6 +73,8 @@ ${i.outstandingSummary}
 
 ${i.outstandingBullets.length ? i.outstandingBullets.map((b) => '  - ' + b).join('\n') : '  (no bullet breakdown provided)'}
 === END OUTSTANDING WORK ===
+
+${i.subtaskBrief ?? '## THIS ITERATION\'S SUBTASK\n\n(No structured brief was assigned — pick the highest-value outstanding item using your judgment.)'}
 
 ## Your mandate for THIS iteration
 
@@ -363,12 +367,31 @@ knife, and no rush animation — just static text" — not "polish UI".
 
 ## Output format — CRITICAL
 
-Your FINAL message must be valid JSON on a single line, wrapped in a fenced
-block like this, and NOTHING ELSE after it:
+Your FINAL message must be a single fenced JSON block, and NOTHING ELSE
+after it. The shape:
 
 \`\`\`json
-{"done": false, "summary": "one-paragraph summary of what remains", "outstanding": ["bullet 1", "bullet 2"]}
+{
+  "done": false,
+  "summary": "one-paragraph summary of what remains",
+  "outstanding": ["short bullet 1", "short bullet 2"],
+  "subtasks": [
+    {
+      "title": "short bullet 1",
+      "files": ["packages/shared/src/game/bots/mirror.ts"],
+      "symptom": "concrete observed behavior, e.g. 'bot ties every round vs human who picks ROCK'",
+      "desired": "what the fixed behavior looks like",
+      "acceptance": "an executable check, e.g. 'simulate 20 games where human always picks ROCK; tie rate < 50%'"
+    }
+  ]
+}
 \`\`\`
+
+\`outstanding\` is REQUIRED (array of strings). \`subtasks\` is optional but
+STRONGLY recommended — autopilot's worker uses these fields as a
+self-contained brief so it doesn't have to re-discover the repo every
+iteration. If you include \`subtasks\`, they must correspond positionally
+to \`outstanding\` (subtasks[i].title === outstanding[i]).
 
 Use \`"done": true\` ONLY if every acceptance criterion in FINAL_GOAL.md is met
 AND the repo is genuinely shippable to millions. When in doubt, return false.

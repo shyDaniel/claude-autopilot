@@ -33,6 +33,17 @@ import {
 import { detectStartCmd, startService, type ServiceHandle } from './service.js';
 import { printBanner, writeFinalReport } from './finalReport.js';
 import { detectAvailableMcps, looksLikeWebApp, renderMcpSection } from './mcp.js';
+import {
+  loadPlan,
+  savePlan,
+  reconcilePlan,
+  pickNextSubtask,
+  markExhaustedAsFailed,
+  planSummary,
+  renderSubtaskBrief,
+  type Plan,
+  type Subtask,
+} from './planner.js';
 
 export interface AutopilotOptions {
   repo: string;
@@ -53,6 +64,7 @@ export interface AutopilotOptions {
   verbose: boolean;
   startCmd?: string;
   startOnDoneDisabled: boolean;
+  maxSubtaskAttempts: number;
 }
 
 const BASE_BACKOFF_MS = 4_000;
@@ -151,6 +163,8 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
   const history: IterationSnapshot[] = [];
   let consecutiveErrors = 0;
   let exitCode = 0;
+  let plan: Plan | null = await loadPlan(repo);
+  let lastWorkedOnId: string | undefined = plan?.lastWorkedOnId;
 
   while (true) {
     if (opts.maxIterations !== undefined && state.iteration >= opts.maxIterations) {
@@ -270,6 +284,38 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
     log.info(`outstanding: ${truncate(verdict.summary, 240)}`);
     for (const b of verdict.outstanding.slice(0, 8)) log.dim(`  - ${b}`);
 
+    // Reconcile the persistent plan ledger with the latest verdict.
+    plan = reconcilePlan(plan, verdict.outstanding, verdict.subtasks, state.iteration, lastWorkedOnId);
+    const newlyFailed = markExhaustedAsFailed(plan, opts.maxSubtaskAttempts);
+    const summary = planSummary(plan);
+    log.info(
+      `plan: ${summary.pending} pending · ${summary.in_progress} in_progress · ${summary.completed} completed · ${summary.failed} failed (of ${summary.total})`,
+    );
+    if (newlyFailed.length > 0) {
+      log.warn(`subtask(s) hit max attempts (${opts.maxSubtaskAttempts}) and were marked failed: ${newlyFailed.join(', ')}`);
+      await events.emit({
+        iter: state.iteration,
+        phase: 'loop',
+        kind: 'error',
+        msg: `subtasks failed after ${opts.maxSubtaskAttempts} attempts: ${newlyFailed.join(', ')}`,
+      });
+    }
+
+    const nextSubtask = pickNextSubtask(plan, opts.maxSubtaskAttempts);
+    if (nextSubtask) {
+      nextSubtask.status = 'in_progress';
+      plan.lastWorkedOnId = nextSubtask.id;
+      lastWorkedOnId = nextSubtask.id;
+      log.step(`planner: next subtask ${nextSubtask.id} (attempt ${nextSubtask.attempts + 1}) — ${truncate(nextSubtask.text, 120)}`);
+    } else {
+      plan.lastWorkedOnId = undefined;
+      lastWorkedOnId = undefined;
+      if (summary.pending === 0 && summary.failed > 0) {
+        log.err(`all pending subtasks exhausted retries; ${summary.failed} failed — waking stagnation path`);
+      }
+    }
+    await savePlan(repo, plan);
+
     if (opts.dryRun) {
       log.warn('dry-run: skipping worker');
       await events.emit({ iter: state.iteration, phase: 'loop', kind: 'end', msg: 'dry_run' });
@@ -295,6 +341,7 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
         verbose: opts.verbose,
         availableMcps: mcpSection,
         isWebApp,
+        subtaskBrief: nextSubtask ? renderSubtaskBrief(nextSubtask) : undefined,
       });
       workerTranscript = result.transcript;
       consecutiveErrors = 0;

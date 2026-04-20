@@ -30,6 +30,7 @@ program
   .option('--worker-max-turns <n>', 'cap turns per worker iteration', (v) => parseInt(v, 10))
   .option('--judge-max-turns <n>', 'cap turns per judge iteration', (v) => parseInt(v, 10))
   .option('--stagnation-threshold <n>', 'iterations with no progress before halting', (v) => parseInt(v, 10), 3)
+  .option('--max-subtask-attempts <n>', 'mark a subtask failed after N unsuccessful worker iterations on it', (v) => parseInt(v, 10), 3)
   .option('--no-stagnation', 'disable the stagnation detector')
   .option('--no-auto-refine', 'on stagnation, do NOT spawn a meta-agent to refine autopilot itself')
   .option('--autopilot-source <path>', 'path to the claude-autopilot source repo (auto-detected if omitted)')
@@ -57,6 +58,7 @@ program
         workerMaxTurns: opts.workerMaxTurns as number | undefined,
         judgeMaxTurns: opts.judgeMaxTurns as number | undefined,
         stagnationThreshold: (opts.stagnationThreshold as number | undefined) ?? 3,
+        maxSubtaskAttempts: (opts.maxSubtaskAttempts as number | undefined) ?? 3,
         stagnationDisabled: (opts as { stagnation?: boolean }).stagnation === false,
         autoRefine: (opts as { autoRefine?: boolean }).autoRefine !== false,
         autopilotSource: opts.autopilotSource as string | undefined,

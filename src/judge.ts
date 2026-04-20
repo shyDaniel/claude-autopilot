@@ -6,10 +6,19 @@ import type { StatusWriter } from './status.js';
 import { withModel, type ModelSelector } from './model.js';
 import { printMessage } from './transcript.js';
 
+export interface StructuredSubtask {
+  title?: string;
+  files?: string[];
+  symptom?: string;
+  desired?: string;
+  acceptance?: string;
+}
+
 export interface Verdict {
   done: boolean;
   summary: string;
   outstanding: string[];
+  subtasks?: StructuredSubtask[];
 }
 
 export interface JudgeArgs {
@@ -105,10 +114,14 @@ export function extractVerdict(text: string): Verdict | null {
     try {
       const obj = JSON.parse(c) as Partial<Verdict>;
       if (typeof obj.done === 'boolean' && typeof obj.summary === 'string') {
+        const subtasks = Array.isArray(obj.subtasks)
+          ? obj.subtasks.filter((s): s is StructuredSubtask => !!s && typeof s === 'object')
+          : undefined;
         return {
           done: obj.done,
           summary: obj.summary,
           outstanding: Array.isArray(obj.outstanding) ? obj.outstanding.map(String) : [],
+          subtasks,
         };
       }
     } catch {
