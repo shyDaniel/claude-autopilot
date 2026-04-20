@@ -46,11 +46,20 @@ ${i.outstandingBullets.length ? i.outstandingBullets.map((b) => '  - ' + b).join
      - Pick the best option with your judgment and proceed.
 5. **Test your change like a real user, not like a test-runner.**
    - Run the project's test suite — that is the floor, not the ceiling.
-   - For UI work: start the dev server (or use a running one), drive it via
-     Playwright against a real Chromium, click the thing you changed, verify
-     the state transition is visible, take a screenshot, and OPEN the
-     screenshot with the Read tool to eyeball it. If it looks empty, broken,
-     or mismatched with the product theme — you are NOT done.
+   - For UI work: start the dev server (or use a running one), then DRIVE
+     the UI. Prefer the \`playwright\` MCP if configured (tools starting
+     with \`browser_\*\`) — take a screenshot after every click and OPEN
+     the image with Read to see what you actually produced. Otherwise use
+     Playwright scripts + \`recordVideo\` so animations are reviewable.
+   - **Animation timing:** any transition < 300ms is invisible to humans.
+     After any UI change, confirm meaningful states hold for ≥ 500ms, and
+     reveal/result frames for ≥ 800ms. Multiple state changes flashing
+     through in < 1s is a "flash-by" bug — fix it by inserting explicit
+     holds, not by declaring done.
+   - Click the thing you changed, verify the state transition is visible,
+     take a screenshot, and OPEN the screenshot with the Read tool to
+     eyeball it. If it looks empty, broken, flashes by too fast, or
+     mismatched with the product theme — you are NOT done.
    - For games / multi-round logic: simulate at least 20 rounds and log the
      outcome distribution. A >80% tie rate, infinite loop, or immediate win
      means you still have work to do. Fix the strategy / engine / state
@@ -201,10 +210,36 @@ every automated check and still be unshippable because the feel is wrong.
    - Verify documentation reflects the current state.
 4. **Use the product like a real user.** This is mandatory — not optional:
    - **If it's a web app / UI:** start the dev server (or use a running one),
-     drive it via Playwright (there is likely a \`scripts/\` dir with existing
-     smoke scripts — reuse or extend them). Click at least 3 primary user
-     flows end-to-end. Take screenshots. Open the screenshots with the Read
-     tool and EVALUATE them visually — do NOT just confirm the file exists.
+     then drive it with **visual feedback on every step**:
+       - If a \`playwright\` MCP is configured (tools named
+         \`browser_navigate\`, \`browser_click\`, \`browser_take_screenshot\`,
+         \`browser_snapshot\`, \`browser_wait_for\`, etc.): PREFER IT. After
+         every click, call \`browser_take_screenshot\` and OPEN the image
+         with Read. React to what you actually see, not what you assumed
+         would happen. That is the human loop.
+       - If no browser MCP is configured, fall back to writing Playwright
+         scripts in \`scripts/\`, but record video
+         (\`recordVideo: { dir: 'screenshots/videos/' }\`) AND sample
+         screenshots at 100ms intervals during state transitions so you
+         can review animation timing after the fact.
+     Click at least 3 primary user flows end-to-end. Take screenshots.
+     OPEN the screenshots with Read and EVALUATE them visually — do NOT
+     just confirm the file exists.
+   - **Animation timing rubric** — critical for "feel":
+       - Any UI transition < 300ms is imperceptible to most humans. Require
+         **≥ 500ms** for meaningful state changes, **≥ 800ms** for
+         reveal/result moments (e.g. winning hand, score change), and an
+         explicit pause or progress indicator between phases so the user
+         knows what just happened.
+       - If multiple distinct UI states cycle through in < 1 second total,
+         that is a "flash-by" bug — the user cannot follow what happened.
+         List it as outstanding with exact wording:
+         "RESULT PHASE: 3 state changes happen within {measured ms}ms — user
+         cannot perceive them. Insert a ≥ 800ms hold on the reveal frame
+         and a ≥ 500ms transition between phases."
+       - Measure timing by sampling screenshots at 100ms intervals during
+         the transition OR by reading \`setTimeout\` / animation durations
+         in the source code. If either shows < 300ms, it's a bug.
    - **If it's a game:** play at least ONE full game to terminal state with a
      realistic opponent. If there are bots, play against EACH strategy. Then
      simulate 20 consecutive games and record the outcome distribution
