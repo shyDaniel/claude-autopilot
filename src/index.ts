@@ -36,6 +36,8 @@ program
   .option('--max-refinements <n>', 'cap how many times autopilot can refine itself per target run', (v) => parseInt(v, 10), 3)
   .option('--no-email', 'disable email alerts even if SMTP env vars are set')
   .option('-v, --verbose', 'stream full text blocks and full tool inputs to stdout (otherwise only first line / name preview)')
+  .option('--start-cmd <cmd>', 'command to restart the target service on done (default: auto-detect from start.sh / package.json / pyproject.toml)')
+  .option('--no-start-on-done', 'do not (re)start the target service when the judge returns done:true')
   .option('--no-push', 'commit but do not push')
   .option('--dry-run', 'run the judge once and exit, without invoking the worker')
   .option('--resume', 'resume from .autopilot/state.json inside the target repo')
@@ -61,6 +63,8 @@ program
         maxRefinements: (opts.maxRefinements as number | undefined) ?? 3,
         emailDisabled: (opts as { email?: boolean }).email === false,
         verbose: Boolean(opts.verbose),
+        startCmd: opts.startCmd as string | undefined,
+        startOnDoneDisabled: (opts as { startOnDone?: boolean }).startOnDone === false,
         noPush: (opts as { push?: boolean }).push === false,
         dryRun: Boolean(opts.dryRun),
         resume: Boolean(opts.resume),

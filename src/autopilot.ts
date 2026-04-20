@@ -30,6 +30,8 @@ import {
   loadNotifierConfig,
   type BigProgressState,
 } from './notifier.js';
+import { detectStartCmd, startService, type ServiceHandle } from './service.js';
+import { printBanner, writeFinalReport } from './finalReport.js';
 
 export interface AutopilotOptions {
   repo: string;
@@ -48,6 +50,8 @@ export interface AutopilotOptions {
   maxRefinements: number;
   emailDisabled: boolean;
   verbose: boolean;
+  startCmd?: string;
+  startOnDoneDisabled: boolean;
 }
 
 const BASE_BACKOFF_MS = 4_000;
@@ -192,10 +196,45 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
       log.info(verdict.summary);
       await events.emit({ iter: state.iteration, phase: 'loop', kind: 'end', msg: 'done' });
       await status.update({ phase: 'stopped', stopReason: 'done', currentAction: undefined });
+
+      let service: ServiceHandle | null = null;
+      let serviceError: string | undefined;
+      if (!opts.startOnDoneDisabled) {
+        const cmd = opts.startCmd ?? detectStartCmd(repo);
+        if (cmd) {
+          try {
+            service = await startService(repo, cmd);
+            log.ok(`service started: ${service.cmd} (pid=${service.pid}, log=${service.logPath})`);
+          } catch (err) {
+            serviceError = `failed to start service (${cmd}): ${(err as Error).message}`;
+            log.warn(serviceError);
+          }
+        } else {
+          serviceError = 'no start command detected; pass --start-cmd "<cmd>" to enable';
+          log.warn(serviceError);
+        }
+      }
+
+      const report = await writeFinalReport({
+        repoPath: repo,
+        state,
+        verdict,
+        service,
+        serviceError,
+      });
+      printBanner({
+        repoPath: repo,
+        state,
+        verdict,
+        service,
+        serviceError,
+        reportPath: report.path,
+      });
+
       await notifier.sendImmediate(
         'done',
         `[autopilot] SHIPPED: ${repo}`,
-        `The judge has confirmed FINAL_GOAL.md is fully satisfied after ${state.iteration} iteration${state.iteration === 1 ? '' : 's'}.\n\nRepo: ${repo}\nFinished: ${new Date().toISOString()}\nTotal commits this run: ${afterSnapCount(initialSnap, snapshotRepo(repo))}\n\nVerdict summary:\n${verdict.summary}\n`,
+        report.markdown,
       );
       break;
     }
@@ -472,10 +511,6 @@ function truncate(s: string, n: number): string {
 function nameFromPath(p: string): string {
   const parts = p.split('/').filter(Boolean);
   return parts[parts.length - 1] ?? p;
-}
-
-function afterSnapCount(before: { commitCountTotal: number }, after: { commitCountTotal: number }): number {
-  return Math.max(0, after.commitCountTotal - before.commitCountTotal);
 }
 
 // re-export defaults for CLI consumption
