@@ -1,5 +1,48 @@
 # WORKLOG
 
+## 2026-04-29 — CI workflow + gitleaks history scan (S-011)
+
+`ls .github` returned ENOENT — README claimed tests pass and the build is
+clean, but nothing enforced this on push/PR, and there was no automated
+guard against another `bb_live_`-class leak (the same kind that landed in
+commit cbcca74 and triggered S-001). Fixed:
+
+- Added [.github/workflows/ci.yml](.github/workflows/ci.yml) running on
+  `push` / `pull_request` / `workflow_dispatch` with two jobs:
+  1. `build-test` matrix on Node 20 + 22 — `npm ci && npm run build &&
+     npm test`. Concurrency-cancels superseded runs per ref.
+  2. `secret-scan` — installs upstream gitleaks v8.30.1 binary directly
+     (no license dance), checks out full history (`fetch-depth: 0`),
+     runs `gitleaks detect --config .gitleaks.toml --exit-code 1`, and
+     uploads the SARIF report as an artifact regardless of outcome.
+- Added [.gitleaks.toml](.gitleaks.toml) extending the default ruleset,
+  with a single allowlisted commit (`cbcca741…` — the historical
+  Browserbase leak from S-001 that hasn't been history-rewritten yet).
+  Allowlisting the *commit*, not the *secret value*, keeps the gate
+  strict: any new commit containing the same or any other secret still
+  fires red.
+- Added a CI badge to README pointing at the new workflow.
+
+Verified locally before push:
+
+- Downloaded gitleaks 8.30.1 to `/tmp` and ran the same command the
+  workflow runs. Without the config: 1 finding (the known
+  `bb_live_jwFahQ…Mw` literal at `src/mcp.ts:63` in commit cbcca74),
+  exit 1. With `--config .gitleaks.toml`: 0 findings, exit 0.
+- Synthetic test in a throwaway repo: committed
+  `bb_live_<24 random chars>`, ran the same gated command, exit 1
+  ("leaks found: 1"). Confirms the gate fires red on a new leak even
+  with the historical-leak allowlist active.
+- `npm run build` clean, `npm test` 144/144 pass — both the same
+  invocations CI runs.
+- YAML parses cleanly through `python3 -c "yaml.safe_load(...)"`. `on:`
+  is quoted defensively (YAML 1.1 boolean coercion footgun).
+
+Tracked debt: the allowlist entry should be removed after the
+Browserbase token is rotated AND the `cbcca74` commit is rewritten out
+of `origin/main` history (out-of-band operator action; documented in
+`.gitleaks.toml` and S-001).
+
 ## 2026-04-29 — work/judge skill: triage runtime malware-refusal reminder (refinement #1)
 
 Trigger: orchestrator dispatched evolve at xiaodaoyiba iter 3. Iters 1 & 2

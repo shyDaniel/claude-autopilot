@@ -1,5 +1,7 @@
 # agent-autopilot
 
+[![CI](https://github.com/shyDaniel/agent-autopilot/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/shyDaniel/agent-autopilot/actions/workflows/ci.yml)
+
 > Zero-human-in-the-loop wrapper around Claude Code **or Codex**. Point it at
 > any repo with a `FINAL_GOAL.md`; it runs a **skills-based** judge / eval /
 > orchestrator / worker / evolve loop until the project is genuinely shipped —

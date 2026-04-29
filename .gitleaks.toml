@@ -1,0 +1,28 @@
+# gitleaks configuration for agent-autopilot
+#
+# Inherits all default rules from upstream gitleaks (extend.useDefault = true),
+# then allowlists the single known historical leak so the CI secret-scan gate
+# is meaningful: it is GREEN today, RED on the *next* leak.
+#
+# Tracked debt: the BROWSERBASE_API_KEY literal in commit cbcca74 (v0.8.0).
+# HEAD is clean as of S-001 (commit 9fc6021). The token still exists in
+# git history on origin/main; rotation on the Browserbase dashboard is the
+# canonical fix. History rewrite was deferred (see WORKLOG.md, S-001).
+#
+# To remove this allowlist after the token is rotated AND history is
+# rewritten (e.g. with `git filter-repo --replace-text`), delete the
+# [allowlist.commits] entry below.
+
+title = "agent-autopilot gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known historical leaks tracked as debt; see WORKLOG.md S-001"
+# Specific commit that introduced the leaked Browserbase key.
+# Allowlisting the commit (not the secret value) keeps the gate strict:
+# any *new* commit containing the same or any other secret will still fire.
+commits = [
+  "cbcca741f98949f97f3be021005e27464d7c412f",
+]
