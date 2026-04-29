@@ -37,7 +37,11 @@ function gitCommitsSince(repoPath: string, sinceIso: string): string[] {
     const out = execFileSync(
       'git',
       ['-C', repoPath, 'log', '--oneline', '--no-color', `--since=${sinceIso}`],
-      { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 },
+      {
+        encoding: 'utf8',
+        maxBuffer: 10 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
     );
     return out.split('\n').filter(Boolean);
   } catch {

@@ -1,5 +1,44 @@
 # WORKLOG
 
+## 2026-04-29 — silence raw `fatal: ambiguous argument 'HEAD'` git-stderr leak on empty repos (S-014)
+
+Eval observed 4 raw `fatal: ambiguous argument 'HEAD'` lines leaking to the
+terminal when running `autopilot run . --dry-run` against a fresh `git
+init` repo (lines 2-7 and 16-21 of /tmp/eval-shot-6-dryrun.txt). The JS
+`try/catch` in `metrics.ts` / `orchestrator.ts` / `refine.ts` /
+`finalReport.ts` correctly swallowed the throw and returned the
+documented sentinel ('', null, '(git log failed)' etc.) — but
+`execFileSync('git', …)` without an explicit `stdio` shape inherits FD2
+from the parent, so the kernel had already written git's stderr to the
+parent TTY before the JS exception fired. Cosmetic, but visually
+dominates the first frame and looks broken.
+
+Fix: pass `stdio: ['ignore', 'pipe', 'pipe']` to all six git
+`execFileSync` call sites — `src/metrics.ts:40,53,64`,
+`src/orchestrator.ts:200`, `src/commands/refine.ts:212`, and
+`src/finalReport.ts:37`. stderr is now captured (and discarded by the
+existing catch); the documented fallback strings remain unchanged.
+
+Regression test: [test/metrics-stderr.test.ts](test/metrics-stderr.test.ts)
+spawns a child node process that imports `src/metrics.ts` and runs the
+four helpers against a freshly `git init`'d directory with zero
+commits, asserting `result.stderr === ''` and that nothing matches
+`/fatal:/i`. Validated the test catches the regression: with the fix
+reverted (via `git stash`), the test fails red with a 939-byte stderr
+buffer containing 5 `fatal:` lines, exactly matching the bug shape the
+eval reported. With the fix in place, the test passes green and the
+buffer is empty.
+
+End-to-end acceptance per the brief: ran `node bin/autopilot.js run .
+--dry-run --no-email --max-iterations 1` inside a freshly-init'd
+/tmp/eval-target-s014, captured stdout+stderr together — `grep -c
+"fatal:"` returns 0 (was 4 before this change). Banner is now the
+dominant content of the first iteration block; the only remaining
+above-the-banner line is the `browserbase MCP disabled` notice, which
+is tracked as a separate outstanding item.
+
+149/149 tests pass (was 144 + 5 new). `npm run build` clean.
+
 ## 2026-04-29 — refinement #3: top-of-file kill switch on work skill malware-refusal regression
 
 Trigger: orchestrator dispatched evolve after iter 000001 + 000002 on

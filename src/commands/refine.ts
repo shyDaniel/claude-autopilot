@@ -209,7 +209,10 @@ async function saveTranscript(targetRepo: string, refinementN: number, text: str
 
 function git(cwd: string, args: string[]): string {
   try {
-    return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim();
+    return execFileSync('git', ['-C', cwd, ...args], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
   } catch {
     return '';
   }

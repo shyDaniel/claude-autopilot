@@ -40,6 +40,7 @@ export function diffBetween(repo: string, from: string | null, to: string | null
     return execFileSync('git', ['-C', repo, 'diff', '--stat', '--no-color', `${from}..${to}`], {
       encoding: 'utf8',
       maxBuffer: 10 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
   } catch {
     return '';
@@ -53,6 +54,7 @@ export function fullDiffBetween(repo: string, from: string | null, to: string | 
     return execFileSync('git', ['-C', repo, 'diff', '--no-color', `${from}..${to}`], {
       encoding: 'utf8',
       maxBuffer: 50 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
   } catch {
     return '';
@@ -61,7 +63,10 @@ export function fullDiffBetween(repo: string, from: string | null, to: string | 
 
 function git(repo: string, args: string[]): string {
   try {
-    return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
+    return execFileSync('git', ['-C', repo, ...args], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
   } catch {
     return '';
   }

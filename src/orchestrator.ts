@@ -199,6 +199,7 @@ function recentCommits(repoPath: string, n: number): string {
   try {
     const out = execFileSync('git', ['-C', repoPath, 'log', `-${n}`, '--oneline', '--no-decorate'], {
       encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
     return out || '(no commits)';
   } catch {
