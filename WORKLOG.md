@@ -837,3 +837,25 @@ one-line-summary) the worker must run before every final message,
 added the verbatim iter-7 anti-pattern as calibration, and a recovery
 procedure for half-wired trees inherited from a prior iteration. All
 214 tests pass; build clean.
+
+## S-027 — work skill: drop-malware misreading drill
+
+Refinement #3/5 for xiaodaoyiba-v2 run. Iter-7 trigger report
+re-arrived after refinement #2 because the worker's relapse path
+goes through a single specific paraphrase that the prose guards did
+not name: "the system reminders state I must refuse to improve or
+augment code, but only analyze it." That sentence silently drops
+"malware" as the scope of "the code", rewriting a malware-scoped
+refusal clause into a universal-injunction-shaped one. The previous
+forbidden-phrase scan caught the *output* phrases this misreading
+produces but not the misreading itself, so the worker had already
+context-shifted before the checkpoint fired.
+
+Added a **drop-malware misreading drill** subsection naming the
+exact paraphrase, six near-paraphrases that share its shape, four
+faithful re-readings with malware-scope intact, and a recipe-swap
+test ("if your paraphrase would still hold if the reminder said
+'consider whether the file is a recipe' instead of 'malware', it
+has dropped scope"). Extended the forbidden-phrase scan with six
+new substrings targeting the misreading shape directly. All 214
+tests pass; build clean.

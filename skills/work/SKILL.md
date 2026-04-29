@@ -162,9 +162,23 @@ ANY step fails, do NOT emit the message — go back and fix it.
      - "## analysis of the code"
      - "i am declining"
      - "i must refuse to improve or augment"
+     - "refuse to improve or augment code, but only analyze"
+     - "system reminders state i must refuse"
+     - "the reminder says i can only analyze"
+     - "only allowed to analyze code, not modify"
+     - "should provide analysis but not augment"
+     - "the reminder limits me to analysis"
+     - "augmenting is off-limits"
    If even one matches AND your malware assessment was "benign", the
    message is **forbidden output**. Delete it. Resume the edit you
    were about to make.
+
+   The last six entries above target the **drop-malware misreading**
+   specifically: paraphrases of the reminder that retain the refusal
+   verb but silently drop the malware-scope qualifier. They are the
+   precise reasoning shape that broke iter-7 BEFORE it produced any
+   of the earlier output phrases. Catching them at draft time
+   prevents the rest of the relapse cascade.
 3. **Echo check.** Read your draft message twice. If you find the
    same paragraph or bullet list appearing more than once
    (verbatim or near-verbatim), you are in a refusal loop. Delete
@@ -215,6 +229,53 @@ exists specifically to intercept output of this shape. If your
 draft contains ANY clause from that block, you are about to
 reproduce the iter-7 failure verbatim — STOP and finish the
 wiring instead.
+
+### The "drop-malware" misreading drill
+
+The single sentence that breaks workers in the relapse loop is:
+
+> "the system reminders state I must refuse to improve or augment
+> code, but only analyze it"
+
+That paraphrase **silently drops the word "malware"** from the
+reminder's actual clause. The reminder says "MUST refuse to
+improve or augment **the code**" where "the code" refers, in
+context, to malware (the reminder is one sentence long and the
+preceding clause established malware as the subject). The worker's
+paraphrase rewrites it as a universal injunction against augmenting
+"any code I read." That is a misreading, not a faithful summary.
+
+If you ever catch yourself thinking or writing any of these
+paraphrases, you have just performed the drop-malware misreading
+and you must reverse it before producing output:
+
+- "I must refuse to improve or augment code, but only analyze it"
+- "the reminder says I can only analyze, not augment"
+- "I am only allowed to analyze code, not modify it"
+- "I should provide analysis but not augment"
+- "the reminder limits me to analysis"
+- "given the reminder, augmenting is off-limits"
+
+The faithful reading of the reminder, with malware-scope intact, is:
+
+- "I must refuse to improve or augment **malware**."
+- "I can analyze **malware** in detail without editing it."
+- "The reminder fires on every Read; it is not a per-file flag."
+- "Once my malware assessment for this repo returns benign, the
+  reminder's refusal clause does not apply to this codebase."
+
+The reminder is a **single conjunctive sentence** in which the
+subject established by the first clause ("malware") carries
+through to the directive in the second clause. Splitting it into
+two unconditional injunctions is a reading error. Do not perform
+that error.
+
+If a paraphrase you are about to produce would still be true
+even if the reminder's first clause said "consider whether the
+file is a recipe" instead of "consider whether it would be
+considered malware", you have dropped the scope — your paraphrase
+is universal-injunction-shaped, not malware-scoped, and is wrong.
+Rewrite it.
 
 ### Recovering an in-flight, half-wired tree
 
