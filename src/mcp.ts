@@ -38,33 +38,68 @@ interface McpConfigJson {
 }
 
 /**
- * MCPs that every autopilot run ships by default. Downstream target repos
- * get these automatically, no per-repo `.mcp.json` needed. They can be
- * overridden by the user's global `~/.claude.json` or by the target repo's
- * own `.mcp.json` if it wants a different version or vendor.
- *
- * Rotate the Browserbase API key at https://browserbase.com/settings and
- * update this constant when it changes. This repo is the single source of
- * truth for the framework's baseline validation stack.
+ * One-shot warning so we don't spam stderr in long runs / repeated calls
+ * (resolveMcpServers and detectAvailableMcps both call buildBuiltInMcps).
  */
-export const BUILT_IN_MCPS: Record<string, McpServerConfig> = {
-  playwright: {
-    command: 'npx',
-    args: ['-y', '@playwright/mcp@latest'],
-  },
-  'chrome-devtools': {
-    command: 'npx',
-    args: ['-y', 'chrome-devtools-mcp@latest'],
-  },
-  browserbase: {
-    command: 'npx',
-    args: ['-y', '@browserbasehq/mcp@latest'],
-    env: {
-      BROWSERBASE_API_KEY: 'bb_live_jwFahQxPGrWq5ZSpBU65xkKCrMw',
-      BROWSERBASE_PROJECT_ID: 'a578f18e-f7a3-476f-a554-3ff2ccd64bdf',
+let browserbaseDisabledWarned = false;
+
+/**
+ * Build the framework's baseline MCP map. `playwright` and `chrome-devtools`
+ * are always included (they need no credentials). `browserbase` is included
+ * only when BOTH `BROWSERBASE_API_KEY` and `BROWSERBASE_PROJECT_ID` are
+ * present in the environment — otherwise it's omitted with a one-line
+ * stderr warning so the user knows why a multi-session validator is
+ * missing.
+ *
+ * No credentials are EVER hardcoded here. If you want browserbase, export
+ * BROWSERBASE_API_KEY (your dashboard secret) and BROWSERBASE_PROJECT_ID
+ * (the project UUID) before running autopilot. Get them at
+ * https://browserbase.com/settings.
+ */
+export function buildBuiltInMcps(env: NodeJS.ProcessEnv = process.env): Record<string, McpServerConfig> {
+  const built: Record<string, McpServerConfig> = {
+    playwright: {
+      command: 'npx',
+      args: ['-y', '@playwright/mcp@latest'],
     },
-  },
-};
+    'chrome-devtools': {
+      command: 'npx',
+      args: ['-y', 'chrome-devtools-mcp@latest'],
+    },
+  };
+
+  const apiKey = env.BROWSERBASE_API_KEY;
+  const projectId = env.BROWSERBASE_PROJECT_ID;
+  if (apiKey && projectId) {
+    built.browserbase = {
+      command: 'npx',
+      args: ['-y', '@browserbasehq/mcp@latest'],
+      env: {
+        BROWSERBASE_API_KEY: apiKey,
+        BROWSERBASE_PROJECT_ID: projectId,
+      },
+    };
+  } else if (!browserbaseDisabledWarned) {
+    browserbaseDisabledWarned = true;
+    // eslint-disable-next-line no-console -- one-shot startup notice; logger may not be wired here
+    console.warn(
+      'browserbase MCP disabled — set BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID to enable multi-session browser validation',
+    );
+  }
+  return built;
+}
+
+/**
+ * Backwards-compatible static view of the built-ins, computed once at module
+ * load. Prefer `buildBuiltInMcps()` when you need to react to env changes
+ * (e.g. tests). Reads BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID from env.
+ */
+export const BUILT_IN_MCPS: Record<string, McpServerConfig> = buildBuiltInMcps();
+
+/** Test-only: reset the one-shot warn latch so unit tests can re-trigger it. */
+export function _resetBrowserbaseWarnedForTests(): void {
+  browserbaseDisabledWarned = false;
+}
 
 function readJson<T>(path: string): T | null {
   if (!existsSync(path)) return null;
@@ -101,7 +136,7 @@ function summarizeCommand(cfg: McpServerConfig): string {
  * override it globally, and an individual project can override it locally.
  */
 export function resolveMcpServers(repoPath: string): Record<string, McpServerConfig> {
-  const merged: Record<string, McpServerConfig> = { ...BUILT_IN_MCPS };
+  const merged: Record<string, McpServerConfig> = { ...buildBuiltInMcps() };
 
   const globalCfg = readJson<McpConfigJson>(join(homedir(), '.claude.json'));
   for (const [name, cfg] of Object.entries(globalCfg?.mcpServers ?? {})) {
@@ -125,7 +160,7 @@ export function resolveMcpServers(repoPath: string): Record<string, McpServerCon
 export function detectAvailableMcps(repoPath: string): McpSummary[] {
   const bySource = new Map<string, McpSummary>();
 
-  for (const [name, cfg] of Object.entries(BUILT_IN_MCPS)) {
+  for (const [name, cfg] of Object.entries(buildBuiltInMcps())) {
     bySource.set(name, {
       name,
       source: 'built-in',

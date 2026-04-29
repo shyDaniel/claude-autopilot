@@ -201,3 +201,46 @@ template rendering, fixture-based loader, all six shipped skills render),
 (8 cases — verdict parser, dispatch table). 135 tests total, all passing.
 
 Bumped to v0.9.0.
+
+## 2026-04-29 — security: drop hardcoded Browserbase credential, env-driven (S-001)
+
+A live Browserbase API key (`bb_live_jwFahQ…Mw`) and paired project UUID had
+been committed into [src/mcp.ts](src/mcp.ts) inside `BUILT_IN_MCPS` and were
+shipping in `dist/mcp.js` (which is in `package.json` `files[]` and would
+have been published to npm as part of v0.9.0). Replaced the hardcoded
+literals with a `buildBuiltInMcps(env = process.env)` factory:
+
+- `playwright` and `chrome-devtools` are unconditional (no creds needed).
+- `browserbase` is included **only when both** `BROWSERBASE_API_KEY` and
+  `BROWSERBASE_PROJECT_ID` are present in env; otherwise it's silently
+  dropped from the built-ins after a one-shot `console.warn` of
+  `browserbase MCP disabled — set BROWSERBASE_API_KEY and
+  BROWSERBASE_PROJECT_ID to enable multi-session browser validation`.
+- `BUILT_IN_MCPS` is preserved as a backwards-compatible static const
+  (`= buildBuiltInMcps()`) so existing imports keep working.
+- `resolveMcpServers` and `detectAvailableMcps` switched to call
+  `buildBuiltInMcps()` dynamically so changing env between calls (in
+  tests, or in a long-running parent process) is honoured.
+
+Verification:
+
+- `grep -E 'bb_(live|test)_' -r src dist` returns nothing after `npm run
+  build`.
+- New unit tests in [test/mcp.test.ts](test/mcp.test.ts): six new cases
+  covering env-set inclusion, env-unset omission, partial-env omission,
+  one-shot warn semantics, and a regression assertion that
+  `JSON.stringify(buildBuiltInMcps({}))` never matches `/bb_live_/`.
+- 141 tests total (was 135), all passing. `npm run build` clean.
+- Smoke test: `node bin/autopilot.js status /tmp/autopilot-smoke` with
+  `env -u BROWSERBASE_API_KEY -u BROWSERBASE_PROJECT_ID` prints the
+  graceful warning once on stderr, then continues with chrome-devtools +
+  playwright. With both env vars set, no warning is printed.
+- README gained an "Optional MCPs" section documenting the env vars and
+  the disabled-by-default behavior.
+
+**Out-of-band remediation still required:** the leaked token is present
+in commit `cbcca74` (v0.8.0). Rotate it on the Browserbase dashboard at
+https://browserbase.com/settings — HEAD is now clean but historical
+commits on `origin/main` still contain the literal. Force-rewriting
+shared history was not performed here without explicit operator
+authorization; rotation is the canonical fix.

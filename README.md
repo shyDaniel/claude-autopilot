@@ -77,6 +77,24 @@ Requires:
 - Codex mode: Codex CLI authenticated via `codex login`
 - `git` and (optionally) `gh` for remote pushes
 
+### Optional MCPs
+
+The framework ships `playwright` and `chrome-devtools` MCPs for free —
+they need no credentials. `browserbase` (multi-session real-browser
+validation, e.g. for matchmaking / multi-user flows) is enabled only
+when both env vars below are set:
+
+```bash
+export BROWSERBASE_API_KEY=<your-key>         # https://browserbase.com/settings
+export BROWSERBASE_PROJECT_ID=<your-project-uuid>
+```
+
+If either is missing, autopilot prints `browserbase MCP disabled — set
+BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID to enable multi-session
+browser validation` once at startup and continues with playwright /
+chrome-devtools only. **No credentials are ever hardcoded in the
+shipped package** — bring your own.
+
 ## Usage
 
 ```bash
