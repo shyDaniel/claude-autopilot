@@ -66,6 +66,30 @@ Browserbase token is rotated AND the `cbcca74` commit is rewritten out
 of `origin/main` history (out-of-band operator action; documented in
 `.gitleaks.toml` and S-001).
 
+End-to-end verified against live GitHub Actions:
+
+- Main run #25098376058 (initial workflow commit): **all 3 jobs green**
+  in 24s — `build & test (Node 20)`, `build & test (Node 22)`,
+  `gitleaks (full history)`.
+- Synthetic red-team test: pushed branch `ci-gitleaks-redteam-test`
+  with `synthetic-leak.ts` containing
+  `SYNTHETIC_LEAK = "bb_live_<24 random>";`. Initial run
+  (#25098415268) was incorrectly green — the default `generic-api-key`
+  rule requires keywords like "key" / "secret" / "token" near the
+  literal, so a const named `SYNTHETIC_LEAK` slipped through. Fixed by
+  adding a custom `browserbase-api-key` rule keyed on the distinctive
+  `bb_live_` / `bb_test_` prefix (commit 2d90040). After force-rebase
+  on the new rule: run #25098506452 turned **red** — `gitleaks (full
+  history): failure`, `build & test (Node 20/22): success`. Job log
+  shows `RuleID: browserbase-api-key`, `leaks found: 1`, `Process
+  completed with exit code 1`. Branch then deleted; main re-run
+  (#25098569874) confirmed all 3 jobs green again.
+
+This validates the CI gate behaves correctly on every axis the brief
+named: enforces tests + build, scans full history, fires red on the
+`bb_live_` token class regardless of variable name, and stays green on
+the current allowlisted-historical-leak repo.
+
 ## 2026-04-29 — work/judge skill: triage runtime malware-refusal reminder (refinement #1)
 
 Trigger: orchestrator dispatched evolve at xiaodaoyiba iter 3. Iters 1 & 2
