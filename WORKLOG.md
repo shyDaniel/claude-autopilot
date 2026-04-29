@@ -565,3 +565,54 @@ Verification:
   `node bin/autopilot.js -V` whose stdout must equal
   `require('./package.json').version`.
 - 144/144 tests pass (was 141 + 3 new). `npm run build` clean.
+
+## 2026-04-29 — S-020 fix(log): partition events by session, render local time + duration
+
+`autopilot log` was printing rows whose `started`/`ended` columns
+went backwards because the rendering path keyed iteration rows on a
+single `Map<number, Row>` while `events.jsonl` actually contains
+multiple consecutive autopilot sessions (each restart emits a fresh
+`iter:0 phase:loop kind:start` marker and resets the iter counter to
+1). When session 4 wrote `iter 1 start 09:00:55` after session 1 had
+written `iter 1 end 08:05:44`, the Map last-write-won the start time
+but kept session 1's end time, producing visibly impossible timelines
+(iter 1 ended 8 min before it started, iter 3 ended 45 min before
+iter 2 ended). The verdict column also leaked a literal `?` for iters
+whose verdict event lacked an `outstanding` array.
+
+Fix in `src/commands/log.ts`:
+
+- `partitionSessions(events)` splits the stream on each iter==0 loop
+  start marker, so iter numbers are scoped per-session and never
+  collide across runs. Legacy logs that pre-date the marker fall into
+  an implicit leading session.
+- Default rendering shows only the latest session; `--all` prints
+  every session as its own table block with a heading.
+- Rows sort by the actual loop-start ISO timestamp; ties break on iter
+  number; rows missing a startedAt sink to the bottom.
+- The `started` column renders local-timezone HH:MM:SS, prefixed with
+  `YYYY-MM-DD ` only when the session's events span more than one
+  local day, eliminating the UTC/local mixing the user could
+  previously infer from comparing the rendered HH:MM:SS to the
+  `started: <ISO>` footer.
+- `ended` column replaced with `duration` (HH:MMm / MMmSSs / SSs / `running`),
+  which by construction can never go negative or backwards.
+- Verdict rendering now branches on whether the verdict event carries
+  an `outstanding` array: emits `N outstanding`, `outstanding`, or
+  `DONE` — the `?? '?'` fallback that produced `? outstanding` is gone.
+
+New regression suite [test/log.test.ts](test/log.test.ts) covers seven
+cases including the exact session-interleave fixture from this repo's
+`.autopilot/events.jsonl` and a UTC-day-boundary fixture (TZ pinned to
+UTC in beforeAll for determinism).
+
+Verification:
+
+- `npm test` → 169/169 pass (was 162 + 7 new).
+- `node dist/index.js log .` against this repo now prints rows whose
+  `started` column is monotonically non-decreasing within the latest
+  session and contains zero `?` placeholders. Confirmed with an
+  inline assertion script that walks every session.
+- `node dist/index.js log . --all` shows all 4 historical sessions as
+  separate blocks, each internally monotonic.
+- `npm run typecheck` clean.

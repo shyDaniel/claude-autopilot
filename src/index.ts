@@ -119,7 +119,8 @@ program
   .argument('[repo]', 'path to the target repository', '.')
   .option('--since <iter>', 'only include iterations from N onward', (v) => parseInt(v, 10))
   .option('--tail <n>', 'only show the last N iterations', (v) => parseInt(v, 10))
-  .action(async (repo: string, opts: { since?: number; tail?: number }) => {
+  .option('--all', 'show all autopilot sessions, not just the most recent one')
+  .action(async (repo: string, opts: { since?: number; tail?: number; all?: boolean }) => {
     process.exit(await logCommand(repo, opts));
   });
 
