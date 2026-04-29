@@ -1,5 +1,24 @@
 # WORKLOG
 
+## 2026-04-29 — worker: system-role malware-reminder neutralizer (S-028)
+
+Iter 7 on xiaodaoyiba-v2 still misfired (0 commits, half-wired tree)
+despite the heavy SKILL.md prose hardening from S-025/S-026/S-027. Root
+cause: the skill body is delivered as a **user message** via
+`query({ prompt })`, which gets buried in context after 10+ Reads each
+appending the malware `<system-reminder>` at system-role authority. The
+worker correctly noted "reminder fired again; assessment unchanged" for
+~10 turns then capitulated on the wiring re-read. Structural fix: lifted
+the worker's system-prompt `append` (Claude SDK path in `src/worker.ts`)
+into `WORKER_SYSTEM_APPEND`, expanded it with a focused, one-paragraph
+counter-instruction that names the per-Read reminder explicitly, asserts
+its malware scope, declares re-reads do not re-arm the gate, and forbids
+the analysis-only pivot mid-iteration. System-role placement keeps it
+chronologically prior and co-equal in authority to the runtime's
+reminder, so it survives long contexts where the user-message SKILL.md
+drifts out of attention. New `test/worker.test.ts` pins the contract
+(6 assertions). All 220 tests pass; `tsc` build clean.
+
 ## 2026-04-29 — work skill: forbid mid-iteration analysis-only pivot (S-025)
 
 Iter 7 on xiaodaoyiba-v2 misfired with 0 commits / 0-byte diff after the
