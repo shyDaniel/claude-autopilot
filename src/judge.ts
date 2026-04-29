@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { query, type Options } from '@anthropic-ai/claude-agent-sdk';
 import { judgePrompt } from './prompts.js';
 import { log } from './logging.js';
@@ -53,6 +55,51 @@ export async function runJudge(args: JudgeArgs): Promise<Verdict> {
   await args.events.emit({ iter: args.iteration, phase: 'judge', kind: 'start' });
 
   const transcript: string[] = [];
+  await runJudgeTurn(args, prompt, transcript, /* isRetry */ false);
+
+  let parsed = extractVerdict(transcript.join('\n'));
+
+  // S-022: judge sometimes finishes a long, productive session without tailing
+  // its output with the required fenced JSON block. Retry once with a tight
+  // JSON-only re-prompt that quotes the judge's own concluding prose, so the
+  // model just has to re-emit the structured form. Previously the loop fell
+  // straight through to a synthesized fallback that discarded ~50 turns of
+  // analysis and surfaced a misleading "FINAL_GOAL.md missing" outstanding.
+  if (!parsed) {
+    const retryPrompt = buildJsonOnlyRetryPrompt(transcript.join('\n'));
+    if (retryPrompt) {
+      log.warn('judge: no fenced JSON in transcript; retrying with JSON-only re-prompt');
+      await args.events.emit({
+        iter: args.iteration,
+        phase: 'judge',
+        kind: 'start',
+        msg: 'attempt 2 (JSON-only retry after parse failure)',
+      });
+      await runJudgeTurn(args, retryPrompt, transcript, /* isRetry */ true);
+      parsed = extractVerdict(transcript.join('\n'));
+    }
+  }
+
+  const verdict = parsed ?? synthesizeFallbackVerdict(transcript.join('\n'), args.repoPath);
+
+  await args.events.emit({
+    iter: args.iteration,
+    phase: 'judge',
+    kind: 'verdict',
+    msg: verdict.done ? 'DONE' : `${verdict.outstanding.length} outstanding`,
+    data: { verdict },
+  });
+
+  if (!parsed) log.warn('judge returned no parseable verdict; synthesized fallback from transcript');
+  return verdict;
+}
+
+async function runJudgeTurn(
+  args: JudgeArgs,
+  prompt: string,
+  transcript: string[],
+  isRetry: boolean,
+): Promise<void> {
   try {
     await withModel(args.selector, async (model) => {
       if (args.runtime === 'codex') {
@@ -72,13 +119,18 @@ export async function runJudge(args: JudgeArgs): Promise<Verdict> {
         return;
       }
 
+      // Retry turn is JSON-only: cap turns hard so a chatty model can't burn
+      // budget re-walking the repo. The retry prompt itself contains the
+      // judge's prior conclusion to summarize.
+      const turnsCap = isRetry ? 2 : args.maxTurns;
+
       const options: Options = {
         cwd: args.repoPath,
         permissionMode: 'bypassPermissions',
         disallowedTools: ['Write', 'Edit', 'NotebookEdit'],
         model,
         mcpServers: args.mcpServers,
-        ...(args.maxTurns ? { maxTurns: args.maxTurns } : {}),
+        ...(turnsCap ? { maxTurns: turnsCap } : {}),
         systemPrompt: {
           type: 'preset',
           preset: 'claude_code',
@@ -105,26 +157,10 @@ export async function runJudge(args: JudgeArgs): Promise<Verdict> {
       kind: 'error',
       msg: (err as Error).message,
     });
-    throw err;
+    if (!isRetry) throw err;
+    // On retry crash, swallow — caller checks parsed status afterwards and
+    // synthesizes a fallback verdict from whatever transcript exists.
   }
-
-  const joined = transcript.join('\n');
-  const verdict = extractVerdict(joined) ?? {
-    done: false,
-    summary: 'Judge did not return structured output; treating as not done.',
-    outstanding: ['Re-run judge; ensure FINAL_GOAL.md is present and well-formed.'],
-  };
-
-  await args.events.emit({
-    iter: args.iteration,
-    phase: 'judge',
-    kind: 'verdict',
-    msg: verdict.done ? 'DONE' : `${verdict.outstanding.length} outstanding`,
-    data: { verdict },
-  });
-
-  if (!extractVerdict(joined)) log.warn('judge returned no parseable verdict; assuming not done');
-  return verdict;
 }
 
 export function extractVerdict(text: string): Verdict | null {
@@ -157,4 +193,126 @@ export function extractVerdict(text: string): Verdict | null {
     }
   }
   return null;
+}
+
+/**
+ * Build a tightly-scoped follow-up prompt that asks the judge to re-emit its
+ * conclusion as a fenced JSON block. Includes the last ~3000 chars of prose
+ * so the model has its own analysis to summarize without re-reading the repo.
+ *
+ * Returns null if the transcript is too short to be worth retrying — the
+ * judge probably crashed before saying anything substantive, in which case
+ * the JSON-only follow-up has no signal to work from and the caller should
+ * fall straight through to the synthesized fallback.
+ *
+ * Pure function — exported for testing.
+ */
+export function buildJsonOnlyRetryPrompt(transcript: string): string | null {
+  const tail = lastProseChunks(transcript, 3000);
+  if (tail.trim().length < 80) return null;
+  return [
+    'Your previous analysis did not end with a fenced JSON block, so it could not be',
+    'parsed. Read your own analysis below and emit ONLY the structured verdict now.',
+    '',
+    'CRITICAL: Your entire response this turn must be a single fenced ```json block,',
+    'with NO prose before or after it. Do not run any tools. Do not re-investigate.',
+    'Just convert your conclusion below into the structured shape:',
+    '',
+    '```json',
+    '{',
+    '  "done": false,',
+    '  "summary": "<one paragraph from your conclusion>",',
+    '  "outstanding": ["<short bullet>", "..."]',
+    '}',
+    '```',
+    '',
+    '`outstanding` MUST be an array of strings (use [] when done is true).',
+    'If your analysis concluded the repo is shippable, set done: true and outstanding: [].',
+    '',
+    '--- YOUR PRIOR ANALYSIS (tail) ---',
+    tail,
+    '--- END OF PRIOR ANALYSIS ---',
+    '',
+    'Now emit the fenced JSON block, and nothing else.',
+  ].join('\n');
+}
+
+/**
+ * Build an honest fallback verdict when even the retry fails to produce a
+ * parseable JSON. Preserves the judge's prose conclusion so the next iteration
+ * has actionable context, and surfaces the real failure mode (parse failure,
+ * not "FINAL_GOAL.md missing or malformed" — that bullet was misleading and
+ * routinely sent the worker chasing a phantom problem when the underlying
+ * cause was simply the judge forgetting to tail with fenced JSON).
+ *
+ * Three branches:
+ *  - FINAL_GOAL.md genuinely missing → bullet says so. This is the only case
+ *    where the old fallback's "FINAL_GOAL.md present and well-formed" wording
+ *    was actually correct.
+ *  - Transcript empty / near-empty → bullet says judge produced no analysis.
+ *  - Transcript has prose but no JSON → preserve the prose tail in summary,
+ *    bullet says JSON missing (NOT FINAL_GOAL.md).
+ *
+ * Pure function — exported for testing.
+ */
+export function synthesizeFallbackVerdict(transcript: string, repoPath: string): Verdict {
+  const finalGoalExists = existsSync(join(repoPath, 'FINAL_GOAL.md'));
+  const proseTail = lastProseChunks(transcript, 1200).trim();
+  const transcriptIsEmpty = proseTail.length < 40;
+
+  if (!finalGoalExists) {
+    // Missing-goal is a genuinely distinct failure mode worth surfacing.
+    return {
+      done: false,
+      summary: 'FINAL_GOAL.md is missing from the repo root — judge cannot evaluate without a goal.',
+      outstanding: [
+        'Create FINAL_GOAL.md at the repo root describing the project goal and acceptance criteria.',
+      ],
+    };
+  }
+
+  if (transcriptIsEmpty) {
+    return {
+      done: false,
+      summary:
+        'Judge session ended without producing any substantive prose or a fenced JSON verdict. ' +
+        'Likely a model-side error or empty session — re-run on next iteration.',
+      outstanding: [
+        'Judge produced no analysis this iteration; re-run is needed before ranking work.',
+      ],
+    };
+  }
+
+  // Have transcript prose but no parseable JSON, even after retry. Preserve
+  // the judge's conclusion verbatim so it isn't lost.
+  return {
+    done: false,
+    summary:
+      'Judge transcript ended with prose instead of the required fenced JSON verdict, and ' +
+      'the JSON-only retry also failed to produce parseable output. The judge\'s analysis is ' +
+      `preserved below: ${proseTail}`,
+    outstanding: [
+      'Judge analysis did not include a fenced JSON verdict; re-run judge so its conclusions ' +
+        'land in the parseable form. Until then, treat the prose summary as advisory.',
+    ],
+  };
+}
+
+/**
+ * Extract the last ~N characters of substantive prose from a transcript.
+ * Filters out tool-use marker lines (`[tool: …]`) and thinking-block markers
+ * we appended in transcript.ts so the tail is likely to contain the model's
+ * actual conclusion text rather than tool dispatch noise.
+ *
+ * Exported for testing only.
+ */
+export function lastProseChunks(transcript: string, maxChars: number): string {
+  if (!transcript) return '';
+  const cleaned = transcript
+    .split('\n')
+    .filter((line) => !line.startsWith('[tool:') && line.trim() !== '[thinking]')
+    .join('\n')
+    .trim();
+  if (cleaned.length <= maxChars) return cleaned;
+  return '…' + cleaned.slice(cleaned.length - maxChars);
 }

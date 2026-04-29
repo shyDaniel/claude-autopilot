@@ -1,5 +1,78 @@
 # WORKLOG
 
+## 2026-04-29 — judge: JSON-only retry + honest fallback verdict (S-022)
+
+Iter 4 judge ran for 47 turns, identified real defects in `autopilot log`
+(missing iter 2 in session 4, multiple sessions reporting `running` for
+iters that finished long ago), and concluded "Real work, real commit,
+no autopilot misfire. The product as a whole is high-quality and very
+close to done. But the observable log defects remain." — but never
+emitted a fenced JSON block. The pre-fix fallback at
+[src/judge.ts:112-116](src/judge.ts) discarded all 47 turns and
+synthesized:
+
+```
+done: false
+summary: "Judge did not return structured output; treating as not done."
+outstanding: ["Re-run judge; ensure FINAL_GOAL.md is present and well-formed."]
+```
+
+Two distinct bugs:
+1. **Misleading outstanding bullet.** Blames FINAL_GOAL.md even though
+   FINAL_GOAL.md was present and well-formed; routes the next worker
+   to chase a phantom problem. The bullet was generic boilerplate
+   triggered by ANY parse failure, not just the genuinely-missing-goal
+   case.
+2. **Discarded analysis.** The judge's actual conclusion (real `log`
+   defects) was thrown away. Next iteration starts cold.
+
+Fix in [src/judge.ts](src/judge.ts):
+
+- Extracted the streaming SDK call into `runJudgeTurn(args, prompt,
+  transcript, isRetry)` so it can be invoked twice in one judge phase.
+- After attempt 1, if `extractVerdict` fails AND the transcript has
+  ≥80 chars of substantive prose (after stripping `[tool: …]` /
+  `[thinking]` markers), invoke a **JSON-only retry** with a
+  tightly-scoped follow-up prompt that quotes the judge's own
+  concluding prose tail (~3000 chars) and demands fenced JSON only.
+  `maxTurns: 2` cap so the retry can't blow budget. Retry crashes are
+  swallowed (caller falls through to fallback).
+- Added `synthesizeFallbackVerdict(transcript, repoPath)` — pure
+  function with three branches: (a) FINAL_GOAL.md genuinely missing →
+  bullet says so; (b) transcript empty / noise-only → bullet says
+  judge produced no analysis; (c) transcript has prose but no JSON →
+  preserve the prose tail in `summary`, bullet names the real failure
+  mode (fenced JSON missing) and **never falsely accuses FINAL_GOAL.md**.
+- Added `buildJsonOnlyRetryPrompt(transcript)` and
+  `lastProseChunks(transcript, maxChars)` as pure helpers, both
+  exported for testing.
+
+Regression coverage: [test/judge.test.ts](test/judge.test.ts) gains 16
+new cases under three describe blocks:
+
+- `buildJsonOnlyRetryPrompt (S-022)` — 6 cases: empty / sub-floor /
+  noise-only return null; substantive prose embeds tail with the
+  required fenced-JSON instruction; tool markers are stripped from the
+  embedded tail; long transcripts truncate to ~3000 chars with leading
+  ellipsis.
+- `synthesizeFallbackVerdict (S-022)` — 6 cases including the headline
+  regression: a fixture mirroring the iter-4 transcript shape from
+  `.autopilot/iterations/000004/` MUST NOT emit the misleading
+  "FINAL_GOAL.md is present and well-formed" bullet, MUST name the
+  fenced-JSON failure mode, and MUST preserve the judge's prose
+  conclusion in summary.
+- `lastProseChunks (S-022)` — 4 cases covering empty input, marker
+  stripping, no-truncate-when-short, and tail-preserving truncation.
+
+185/185 tests pass (was 169 + 16 new). `npm run build` clean.
+Smoke-imported `synthesizeFallbackVerdict` from `dist/judge.js` against
+the actual iter-4 prose: outstanding now reads "Judge analysis did not
+include a fenced JSON verdict; re-run judge so its conclusions land in
+the parseable form. Until then, treat the prose summary as advisory."
+and summary preserves "the observable log defects remain" verbatim —
+the next worker iteration sees what the judge actually found, not a
+phantom FINAL_GOAL.md complaint.
+
 ## 2026-04-29 — eval crash-recovery: parse partial transcript + retry once (S-019)
 
 Eval session at iter 5 (the one that would have evaluated commit b12d5c3,
