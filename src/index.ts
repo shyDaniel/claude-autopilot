@@ -7,6 +7,7 @@ import { statusCommand } from './commands/status.js';
 import { watchCommand } from './commands/watch.js';
 import { logCommand } from './commands/log.js';
 import { log } from './logging.js';
+import { readPackageVersion } from './version.js';
 
 const program = new Command();
 const invokedName = basename(process.argv[1] ?? 'autopilot').includes('codex') ? 'codex-autopilot' : 'autopilot';
@@ -18,7 +19,7 @@ program
       'its current state to "done-done" per FINAL_GOAL.md, with live ' +
       'observability, sticky model fallback, and self-refinement on stagnation.',
   )
-  .version('0.3.0');
+  .version(readPackageVersion());
 
 program
   .command('run', { isDefault: true })

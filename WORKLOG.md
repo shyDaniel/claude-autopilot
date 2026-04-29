@@ -244,3 +244,28 @@ https://browserbase.com/settings — HEAD is now clean but historical
 commits on `origin/main` still contain the literal. Force-rewriting
 shared history was not performed here without explicit operator
 authorization; rotation is the canonical fix.
+
+## 2026-04-29 — fix stale CLI version literal (S-006)
+
+`autopilot -V` was printing `0.3.0` while `package.json` was `0.9.0`
+(six release cuts of drift). Root cause: a hardcoded literal in
+[src/index.ts:21](src/index.ts) `.version('0.3.0')`.
+
+Resolution: replaced the literal with a runtime read of
+`package.json` via a new [src/version.ts](src/version.ts) helper —
+`new URL('../package.json', import.meta.url)` resolves correctly
+both from `src/` (tsx) and `dist/` (post-`tsc`) since both sit one
+level under the package root.
+
+Verification:
+
+- `node bin/autopilot.js -V` → `0.9.0` (was `0.3.0`).
+- `node bin/codex-autopilot.js -V` → `0.9.0`.
+- Drift-proof check: temporarily rewrote `package.json` to
+  `0.9.99-test`, rebuilt, CLI reported `0.9.99-test`. Restored.
+- New test file [test/version.test.ts](test/version.test.ts):
+  three cases — helper returns the package.json string, helper
+  returns a semver-shaped string, and a child-process spawn of
+  `node bin/autopilot.js -V` whose stdout must equal
+  `require('./package.json').version`.
+- 144/144 tests pass (was 141 + 3 new). `npm run build` clean.
