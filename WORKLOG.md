@@ -1,5 +1,88 @@
 # WORKLOG
 
+## 2026-04-29 — eval crash-recovery: parse partial transcript + retry once (S-019)
+
+Eval session at iter 5 (the one that would have evaluated commit b12d5c3,
+the S-017 lazy-MCP fix) crashed with `Claude Code process exited with
+code 1` AFTER finishing visible reasoning but BEFORE emitting the final
+fenced JSON verdict (see `.autopilot/events.jsonl` ts=09:05:47.910Z text
+"All 4 iterations produced real commits ✓" → ts=09:05:48.286Z error
+"Claude Code process exited with code 1"). Result: judge said done,
+runEval threw, autopilot caught it at autopilot.ts:291-298 and
+synthesized the verdict `EVAL OVERRULED JUDGE: Eval crashed: Claude Code
+process exited with code 1` with the single outstanding bullet
+`"Eval crashed; re-run is needed before shipping."` — exactly the brief
+this iteration is fixing. The next iteration's worker had nothing
+actionable to do because the only "outstanding" item was a transient
+SDK crash, not a code defect.
+
+Root cause: [src/eval.ts:98-106](src/eval.ts) (pre-fix) did
+`} catch (err) { events.emit(...); throw err; }` on any SDK exception.
+A non-zero process exit AFTER the eval finished its analysis is treated
+identically to a non-zero exit before the eval even started — both
+paths discard the (potentially complete) transcript and fall through
+to a fixed "not passed" verdict at the call site. There was no retry
+path (the worker and judge both retry via `consecutiveErrors+backoff`
+in autopilot.ts; eval had no equivalent).
+
+Fix in [src/eval.ts](src/eval.ts):
+
+- Extracted the streaming SDK call into `runEvalAttempt(args, prompt,
+  attemptNum)` returning `{ transcript, crashed, error }` instead of
+  throwing. Crashes preserve whatever transcript chunks were collected
+  before the throw fired.
+- Extracted the branching decision into a pure function
+  `decideAfterAttempt(attempt, isRetry, priorError?)` returning one of
+  `'verdict' | 'retry' | 'fall-through'`. Three rules:
+    1. Transcript contains a parseable fenced JSON → ship it (even if
+       the SDK crashed AFTER the JSON streamed — the decision was
+       already made).
+    2. Clean finish but no JSON → fall-through with the existing
+       "Re-run eval; ensure it produces a fenced JSON block." blocker.
+       Don't retry: same prompt + same model + same context = same
+       (non-)output.
+    3. Crashed before JSON → on attempt 1, return 'retry'; on attempt
+       2, fall-through with a two-crash blocker
+       `"Eval crashed twice; re-run is needed before shipping."`
+       carrying the actual error message in the summary so judge/eval
+       can see whether it's recurrent.
+- `runEval` orchestrates: attempt 1 → decide → if 'retry' emit a marker
+  event (`kind:'error'`, msg `attempt 1 crashed before verdict;
+  retrying: …`) and re-run via `runEvalAttempt(..., 2)`. The retry
+  attempt also emits a `kind:'start'` event with msg `attempt 2 (retry
+  after crash)` so `autopilot watch` shows the retry live.
+- `runEval` is now total — never throws. The defensive `try/catch` at
+  autopilot.ts:291-298 is left intact for belt-and-suspenders but is
+  effectively unreachable in normal operation now.
+
+Regression coverage in [test/eval.test.ts](test/eval.test.ts) — 8 new
+cases under `decideAfterAttempt (S-019: SDK crash resilience)`:
+
+1. Clean finish + verdict → `verdict`.
+2. Clean finish + no verdict → `fall-through` (no retry).
+3. Crash AFTER verdict streamed → `verdict` (post-hoc crash, decision
+   already made — exactly the post-fix shape of the original bug if
+   the SDK happened to stream the JSON one chunk earlier).
+4. Crash BEFORE verdict + first attempt → `retry` (the actual S-019
+   event sequence).
+5. Crash BEFORE verdict + retry attempt → `fall-through` with the
+   exact `Eval crashed twice; …` blocker text and the live error code
+   in the summary.
+6. Crash BEFORE verdict + clean retry verdict → `verdict` (happy path
+   of the retry).
+7. Off-by-one defense: `isRetry=true` + crashed + no JSON MUST return
+   `fall-through`, never `retry` — otherwise runEval would loop
+   forever.
+8. Two-crash fall-through prefers prior error when current is
+   undefined.
+
+Verified the regression tests catch the bug: `git stash push --
+src/eval.ts && npm test` reports 8/162 fail with `TypeError:
+decideAfterAttempt is not a function` (the pre-fix code has no such
+export). Restoring the fix returns to 162/162 green. `npm run build`
+clean. Smoke-imported `runEval` from `dist/eval.js` to confirm exports
+resolve from the compiled output, not just `src/`.
+
 ## 2026-04-29 — lazy-load built-in MCPs so metadata commands stay silent (S-017)
 
 Judge & eval reported that `autopilot --version` printed two lines (the
