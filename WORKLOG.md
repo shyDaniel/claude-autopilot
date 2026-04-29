@@ -820,3 +820,20 @@ Verification:
 - `node dist/index.js log . --all` shows all 4 historical sessions as
   separate blocks, each internally monotonic.
 - `npm run typecheck` clean.
+
+## S-026 — work skill: pre-emit checkpoint + iter-7 anti-pattern
+
+Refinement #2/5 for xiaodaoyiba-v2 run. Iter 7 worker correctly did the
+malware check, edited Character.ts/EffectPlayer.ts/GameStage.tsx, then
+re-read Game.tsx and capitulated mid-iteration with "the explicit
+reminder applies to the code I just read, I cannot continue augmenting
+these source files" — leaving 260 lines uncommitted on a benign
+nursery-rhyme RPS game and 0 commits landed. The existing prose guards
+named this exact pattern but were skipped under reminder pressure.
+
+Lifted the rule into a numbered 6-step **pre-emit checkpoint**
+(working-tree, forbidden-phrase, echo, commit-tail, subtask-progress,
+one-line-summary) the worker must run before every final message,
+added the verbatim iter-7 anti-pattern as calibration, and a recovery
+procedure for half-wired trees inherited from a prior iteration. All
+214 tests pass; build clean.
