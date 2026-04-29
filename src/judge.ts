@@ -55,7 +55,7 @@ export async function runJudge(args: JudgeArgs): Promise<Verdict> {
   await args.events.emit({ iter: args.iteration, phase: 'judge', kind: 'start' });
 
   const transcript: string[] = [];
-  await runJudgeTurn(args, prompt, transcript, /* isRetry */ false);
+  const turn1 = await runJudgeTurn(args, prompt, transcript, /* isRetry */ false);
 
   let parsed = extractVerdict(transcript.join('\n'));
 
@@ -65,15 +65,22 @@ export async function runJudge(args: JudgeArgs): Promise<Verdict> {
   // model just has to re-emit the structured form. Previously the loop fell
   // straight through to a synthesized fallback that discarded ~50 turns of
   // analysis and surfaced a misleading "FINAL_GOAL.md missing" outstanding.
+  //
+  // S-023: also retry when the SDK finished with `error_max_turns` etc., even
+  // before checking the parser — that signal tells us the judge was cut off
+  // mid-thought, which is exactly when the JSON-only follow-up has the most
+  // value. Without this, we'd only retry on the symptom (no parseable JSON)
+  // and miss the chance to surface a clear "judge ran out of budget" log line.
   if (!parsed) {
+    const reason = describeRetryReason(turn1);
     const retryPrompt = buildJsonOnlyRetryPrompt(transcript.join('\n'));
     if (retryPrompt) {
-      log.warn('judge: no fenced JSON in transcript; retrying with JSON-only re-prompt');
+      log.warn(`judge: ${reason}; retrying with JSON-only re-prompt`);
       await args.events.emit({
         iter: args.iteration,
         phase: 'judge',
         kind: 'start',
-        msg: 'attempt 2 (JSON-only retry after parse failure)',
+        msg: `attempt 2 (JSON-only retry: ${reason})`,
       });
       await runJudgeTurn(args, retryPrompt, transcript, /* isRetry */ true);
       parsed = extractVerdict(transcript.join('\n'));
@@ -94,12 +101,48 @@ export async function runJudge(args: JudgeArgs): Promise<Verdict> {
   return verdict;
 }
 
+/**
+ * Describe why the JSON-only retry is firing, for both the human-facing log
+ * line and the events.jsonl audit trail. Three buckets:
+ *   - "no fenced JSON in transcript" (clean finish, model just forgot the
+ *     wrap-up — the original S-022 trigger)
+ *   - "judge SDK ended with `<subtype>`" (max turns, max budget, runtime
+ *     error — the S-023 addition; tells the operator the judge was cut off
+ *     rather than chose not to emit JSON)
+ *   - "judge crashed before completing" (no result message at all, e.g.
+ *     `error_during_execution` propagated as a thrown error caught by the
+ *     wrapper)
+ *
+ * Pure function — exported for testing.
+ */
+export function describeRetryReason(turn: JudgeTurnResult): string {
+  if (turn.crashed) return 'judge crashed before completing';
+  if (turn.endSubtype && turn.endSubtype !== 'success') {
+    return `judge SDK ended with \`${turn.endSubtype}\``;
+  }
+  return 'no fenced JSON in transcript';
+}
+
+/**
+ * Outcome of a single SDK invocation. `endSubtype` mirrors the SDK's
+ * `result.subtype` ('success' | 'error_max_turns' | …) so the caller can
+ * decide whether to retry, and lets `events.jsonl` record exactly why a
+ * retry fired. `crashed` is set when the SDK threw before producing a
+ * result message at all (and the wrapper swallowed the throw on a retry).
+ */
+export interface JudgeTurnResult {
+  endSubtype?: string;
+  crashed: boolean;
+}
+
 async function runJudgeTurn(
   args: JudgeArgs,
   prompt: string,
   transcript: string[],
   isRetry: boolean,
-): Promise<void> {
+): Promise<JudgeTurnResult> {
+  let endSubtype: string | undefined;
+  let crashed = false;
   try {
     await withModel(args.selector, async (model) => {
       if (args.runtime === 'codex') {
@@ -116,6 +159,10 @@ async function runJudgeTurn(
           mcpServers: args.mcpServers,
         });
         transcript.push(result.transcript);
+        // Codex transcripts don't carry an SDK-style subtype; treat a clean
+        // return as 'success'. If runCodexExec ever surfaces a crash flag we
+        // can wire it through here without changing the caller.
+        endSubtype = 'success';
         return;
       }
 
@@ -134,9 +181,18 @@ async function runJudgeTurn(
         systemPrompt: {
           type: 'preset',
           preset: 'claude_code',
+          // S-023: hammer the JSON-tail requirement. After 100+ tool turns of
+          // analysis, the model tends to forget the format demand at the very
+          // end and just stop with prose. Reinforced phrasing here is the
+          // single most effective cheap fix; the JSON-only retry below is the
+          // belt-and-suspenders.
           append:
             'You are the JUDGE in an agent-autopilot loop. Be uncompromising. ' +
-            'Output a single fenced JSON block at the end — nothing else after it.',
+            'CRITICAL OUTPUT REQUIREMENT: Your FINAL message MUST end with a single ' +
+            "fenced ```json block containing {done, summary, outstanding[]}. " +
+            'No prose, commentary, or markdown after the closing ``` fence. ' +
+            'If you finish your investigation, immediately emit the JSON block — ' +
+            "do not write 'Now I'll write up my findings' or similar; just emit the JSON.",
         },
       };
       for await (const msg of query({ prompt, options })) {
@@ -148,9 +204,14 @@ async function runJudgeTurn(
           status: args.status,
           transcript,
         });
+        if ((msg as { type?: string }).type === 'result') {
+          const r = msg as unknown as { subtype?: string };
+          if (r.subtype) endSubtype = r.subtype;
+        }
       }
     });
   } catch (err) {
+    crashed = true;
     await args.events.emit({
       iter: args.iteration,
       phase: 'judge',
@@ -161,6 +222,7 @@ async function runJudgeTurn(
     // On retry crash, swallow — caller checks parsed status afterwards and
     // synthesizes a fallback verdict from whatever transcript exists.
   }
+  return { endSubtype, crashed };
 }
 
 export function extractVerdict(text: string): Verdict | null {

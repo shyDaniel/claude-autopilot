@@ -1,5 +1,92 @@
 # WORKLOG
 
+## 2026-04-29 — judge: capture SDK end-subtype, strengthen JSON-tail prompt (S-023)
+
+Iter 5's judge ran 112 events of analysis, produced detailed concluding
+prose ("Good: dist has the new symbols, no TODOs in src, no worker-refusal
+misfire (worker actually edited files and committed b7f132b in iter 4)."),
+then ended cleanly without ever emitting the required fenced JSON block.
+The S-022 retry would have fired against the new build, but the running
+autopilot service was started at 09:00:55 UTC — BEFORE the S-022 fix
+landed at 09:39 — so it was running stale in-memory `dist/judge.js` and
+emitted the OLD boilerplate fallback `"Re-run judge; ensure FINAL_GOAL.md
+is present and well-formed."` for the second time in two iterations
+(iter 4 and iter 5 both lost their analysis the same way).
+
+S-022 fixed the wording. S-023 attacks the upstream cause and adds
+diagnostic clarity for the next regression of the same shape:
+
+1. **Reinforced system-prompt JSON demand** ([src/judge.ts:181-195](src/judge.ts)).
+   The old append was `'Output a single fenced JSON block at the end —
+   nothing else after it.'` — buried after a 290-line skill prompt and
+   easy to forget after 100+ tool turns. New phrasing is
+   `'CRITICAL OUTPUT REQUIREMENT: Your FINAL message MUST end with a
+   single fenced \`\`\`json block containing {done, summary,
+   outstanding[]}. No prose, commentary, or markdown after the closing
+   \`\`\` fence. If you finish your investigation, immediately emit the
+   JSON block — do not write \'Now I\'ll write up my findings\' or
+   similar; just emit the JSON.'` — explicit anti-pattern callout
+   ("don't announce you're going to emit JSON; emit it") because that's
+   exactly what the iter 4/5 transcripts did before getting cut off.
+
+2. **Capture the SDK result subtype.** `runJudgeTurn` now returns a
+   `JudgeTurnResult { endSubtype?, crashed }`. The streaming loop
+   inspects each `result` message and records `subtype` (`'success' |
+   'error_max_turns' | 'error_max_budget_usd' | …`, per the SDK's
+   `coreTypes.d.ts`). On the Codex path we synthesize `'success'` since
+   codex-exec doesn't surface a structured equivalent. On a thrown
+   error the wrapper sets `crashed: true` instead of clobbering
+   `endSubtype`, so the caller can distinguish "SDK threw" from "SDK
+   returned a non-success result message".
+
+3. **Surface the cut-off reason** in both the human log line AND the
+   `events.jsonl` retry-start marker via the new `describeRetryReason`.
+   Three buckets ordered by signal strength:
+     - `'judge crashed before completing'` (highest priority — the SDK
+       threw before producing any result message)
+     - `` 'judge SDK ended with `<subtype>`' `` (max-turns / max-budget /
+       runtime-error — lets the operator distinguish "model literally
+       ran out of budget" from "model forgot the wrap-up" so they can
+       raise `--judge-max-turns` instead of just re-running)
+     - `'no fenced JSON in transcript'` (clean finish, model just
+       forgot — the original S-022 trigger)
+   The log warning AND the `attempt 2 (JSON-only retry: <reason>)`
+   event message both carry the diagnosis end-to-end. Operator now
+   reads "judge SDK ended with `error_max_turns`" in the watch stream
+   and immediately knows what to do.
+
+Regression coverage: [test/judge.test.ts:219-269](test/judge.test.ts)
+adds a `describeRetryReason (S-023)` block with 6 cases — clean-finish
+maps to the S-022 wording verbatim, `error_max_turns` and
+`error_max_budget_usd` both surface explicitly with the backticked
+subtype, crash beats subtype, missing subtype falls back to no-JSON
+wording (Codex path / pre-result-message exit), and a regression guard
+asserts the success path never produces "ended with `success`" output
+(off-by-one truthy-check protection — if someone changes
+`endSubtype !== 'success'` to `endSubtype` only, this test catches it).
+
+Smoke-imported the new helper from compiled `dist/judge.js`:
+```
+clean+nojson: no fenced JSON in transcript
+max_turns:    judge SDK ended with `error_max_turns`
+crashed:      judge crashed before completing
+```
+
+`grep "CRITICAL OUTPUT REQUIREMENT" dist/judge.js` confirms the
+strengthened system-prompt suffix is in the compiled output. 191/191
+tests pass (was 185 + 6 new). `npm run build` clean. `npx tsc
+--noEmit` clean.
+
+Note: the currently-running autopilot service still has stale
+in-memory code from before S-022/S-023; this fix only takes effect on
+the next service restart. The fix targets recurrence — the iter 5
+fallback that produced this brief was already going to land regardless
+of any code change this iteration. After restart, a judge that runs
+out of turns will produce a `events.jsonl` line like
+`{"phase":"judge","kind":"start","msg":"attempt 2 (JSON-only retry:
+judge SDK ended with \`error_max_turns\`)"}` instead of silently
+falling through to the "FINAL_GOAL.md" boilerplate.
+
 ## 2026-04-29 — judge: JSON-only retry + honest fallback verdict (S-022)
 
 Iter 4 judge ran for 47 turns, identified real defects in `autopilot log`

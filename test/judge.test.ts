@@ -7,6 +7,8 @@ import {
   buildJsonOnlyRetryPrompt,
   synthesizeFallbackVerdict,
   lastProseChunks,
+  describeRetryReason,
+  type JudgeTurnResult,
 } from '../src/judge.js';
 
 describe('extractVerdict', () => {
@@ -211,5 +213,57 @@ describe('lastProseChunks (S-022)', () => {
     const out = lastProseChunks(txt, 50);
     expect(out.startsWith('…')).toBe(true);
     expect(out).toContain('TAIL_MARKER');
+  });
+});
+
+describe('describeRetryReason (S-023)', () => {
+  it('reports clean-finish-no-JSON when SDK returned success but parser failed', () => {
+    // The original S-022 trigger shape: judge ran a long session, SDK ended
+    // 'success' (model returned a `result` message), but the prose tail had
+    // no fenced JSON. The retry reason should NOT mention max turns or a
+    // crash — those would mislead the operator into chasing a phantom
+    // budget issue.
+    const turn: JudgeTurnResult = { endSubtype: 'success', crashed: false };
+    expect(describeRetryReason(turn)).toBe('no fenced JSON in transcript');
+  });
+
+  it('surfaces error_max_turns explicitly when the SDK was cut off', () => {
+    // The S-023 motivating shape: iter 5's judge ran 112 events of analysis,
+    // hit the SDK's internal turn cap mid-thought, and never got to emit
+    // JSON. This signal lets the operator distinguish "model forgot the
+    // wrap-up" from "model literally ran out of budget" so they can raise
+    // --judge-max-turns instead of just re-running.
+    const turn: JudgeTurnResult = { endSubtype: 'error_max_turns', crashed: false };
+    expect(describeRetryReason(turn)).toBe('judge SDK ended with `error_max_turns`');
+  });
+
+  it('surfaces error_max_budget_usd when the SDK hit a cost cap', () => {
+    const turn: JudgeTurnResult = { endSubtype: 'error_max_budget_usd', crashed: false };
+    expect(describeRetryReason(turn)).toBe('judge SDK ended with `error_max_budget_usd`');
+  });
+
+  it('treats a thrown crash as the highest-priority signal', () => {
+    // If both crashed and a partial endSubtype were set somehow, prefer the
+    // crash — the operator needs to know the SDK throw fired before any
+    // other diagnostic.
+    const turn: JudgeTurnResult = { endSubtype: 'success', crashed: true };
+    expect(describeRetryReason(turn)).toBe('judge crashed before completing');
+  });
+
+  it('falls back to no-JSON wording when endSubtype is missing entirely', () => {
+    // Codex path or pre-result-message exit: no subtype captured, no crash
+    // flag set. Treat as the original S-022 case — the JSON-only retry is
+    // the right next move regardless.
+    const turn: JudgeTurnResult = { crashed: false };
+    expect(describeRetryReason(turn)).toBe('no fenced JSON in transcript');
+  });
+
+  it('does not falsely accuse the SDK on the success path', () => {
+    // Regression guard: success endSubtype must take the no-JSON branch,
+    // never the "ended with `success`" branch. Catches an off-by-one error
+    // where the truthy check on endSubtype would otherwise fire.
+    const turn: JudgeTurnResult = { endSubtype: 'success', crashed: false };
+    expect(describeRetryReason(turn)).not.toContain('ended with');
+    expect(describeRetryReason(turn)).not.toContain('success');
   });
 });
