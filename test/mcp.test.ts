@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -347,6 +348,7 @@ describe('renderMcpSection', () => {
 describe('CLI metadata commands stay silent on MCP config (S-017 regression)', () => {
   const repoRoot = fileURLToPath(new URL('..', import.meta.url));
   const cliPath = resolve(repoRoot, 'bin', 'autopilot.js');
+  const pkgVersion = (JSON.parse(readFileSync(resolve(repoRoot, 'package.json'), 'utf8')) as { version: string }).version;
 
   function runCli(args: string[]): { stdout: string; stderr: string; combined: string; status: number | null } {
     const env = { ...process.env };
@@ -366,9 +368,9 @@ describe('CLI metadata commands stay silent on MCP config (S-017 regression)', (
     };
   }
 
-  it('--version prints exactly "0.9.0\\n" on combined stdio (no browserbase warning)', () => {
+  it('--version prints exactly the package.json version on combined stdio (no browserbase warning)', () => {
     const r = runCli(['--version']);
-    expect(r.combined).toBe('0.9.0\n');
+    expect(r.combined).toBe(`${pkgVersion}\n`);
     expect(r.combined).not.toMatch(/browserbase/i);
   });
 
