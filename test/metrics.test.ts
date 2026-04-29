@@ -1,8 +1,14 @@
 import { describe, it, expect } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
+  changedPathsBetween,
   detectStagnation,
   jaccard,
   normalizeBullet,
+  touchesAutopilotInternals,
   type IterationSnapshot,
 } from '../src/metrics.js';
 
@@ -88,5 +94,77 @@ describe('detectStagnation', () => {
       make(4, ['• Add tests', '• Add docs'], 10),
     ];
     expect(detectStagnation(h, 3).stagnant).toBe(true);
+  });
+});
+
+describe('touchesAutopilotInternals (S-024 self-drive guard)', () => {
+  it('flags any path under src/, dist/, skills/, or bin/', () => {
+    expect(touchesAutopilotInternals(['src/judge.ts'])).toBe(true);
+    expect(touchesAutopilotInternals(['dist/judge.js'])).toBe(true);
+    expect(touchesAutopilotInternals(['skills/judge/SKILL.md'])).toBe(true);
+    expect(touchesAutopilotInternals(['bin/autopilot.js'])).toBe(true);
+  });
+
+  it('flags package.json and package-lock.json (deps may shift behavior)', () => {
+    expect(touchesAutopilotInternals(['package.json'])).toBe(true);
+    expect(touchesAutopilotInternals(['package-lock.json'])).toBe(true);
+  });
+
+  it('does NOT flag worklog, README, tests, or arbitrary docs', () => {
+    expect(touchesAutopilotInternals(['WORKLOG.md'])).toBe(false);
+    expect(touchesAutopilotInternals(['README.md'])).toBe(false);
+    expect(touchesAutopilotInternals(['test/judge.test.ts'])).toBe(false);
+    expect(touchesAutopilotInternals(['docs/foo.md'])).toBe(false);
+    expect(touchesAutopilotInternals(['.autopilot/state.json'])).toBe(false);
+  });
+
+  it('returns false on an empty path list', () => {
+    expect(touchesAutopilotInternals([])).toBe(false);
+  });
+
+  it('returns true when ANY path in a mixed list is internal', () => {
+    expect(touchesAutopilotInternals(['WORKLOG.md', 'src/autopilot.ts', 'README.md'])).toBe(true);
+  });
+});
+
+describe('changedPathsBetween (S-024 self-drive guard)', () => {
+  it('returns the list of files changed between two SHAs', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'autopilot-changedpaths-'));
+    const sh = (args: string[]): string =>
+      execFileSync('git', ['-C', tmp, ...args], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' },
+      }).trim();
+    sh(['init', '-q', '-b', 'main']);
+    sh(['config', 'user.email', 't@t']);
+    sh(['config', 'user.name', 't']);
+    writeFileSync(join(tmp, 'README.md'), 'x\n');
+    sh(['add', 'README.md']);
+    sh(['commit', '-q', '-m', 'init']);
+    const before = sh(['rev-parse', 'HEAD']);
+    mkdirSync(join(tmp, 'src'));
+    writeFileSync(join(tmp, 'src/judge.ts'), 'export const x = 1;\n');
+    writeFileSync(join(tmp, 'WORKLOG.md'), 'log\n');
+    sh(['add', 'src/judge.ts', 'WORKLOG.md']);
+    sh(['commit', '-q', '-m', 'two files']);
+    const after = sh(['rev-parse', 'HEAD']);
+    const changed = changedPathsBetween(tmp, before, after);
+    expect(changed.sort()).toEqual(['WORKLOG.md', 'src/judge.ts']);
+    expect(touchesAutopilotInternals(changed)).toBe(true);
+  });
+
+  it('returns [] when from===to', () => {
+    expect(changedPathsBetween('/tmp/anything', 'abc', 'abc')).toEqual([]);
+  });
+
+  it('returns [] when either SHA is null', () => {
+    expect(changedPathsBetween('/tmp/anything', null, 'abc')).toEqual([]);
+    expect(changedPathsBetween('/tmp/anything', 'abc', null)).toEqual([]);
+  });
+
+  it('returns [] for a non-git path', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'autopilot-changedpaths-nogit-'));
+    expect(changedPathsBetween(tmp, 'a', 'b')).toEqual([]);
   });
 });

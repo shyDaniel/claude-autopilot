@@ -1,5 +1,28 @@
 # WORKLOG
 
+## 2026-04-29 — autopilot: self-drive stale-dist auto-relaunch (S-024)
+
+When autopilot drives its own source repo (target===autopilotSource) and a
+worker commit lands changes under `src/`, `dist/`, `skills/`, `bin/`, or
+`package.json`, the running parent process keeps using the cached pre-commit
+modules in Node's loader — the diagnosed root cause of three consecutive
+boilerplate fallback verdicts at iters 4–5 (the orchestrator's evolve report
+literally one-sentenced this fix). After every worker commit autopilot now
+re-detects self-drive, lists `changedPathsBetween(before, after)`, and if the
+new `touchesAutopilotInternals` heuristic flags any of those paths it runs
+`npm run build`, emits a `loop:self-relaunch` event, persists state, and
+re-execs via the existing `relaunchAutopilot()` helper with `--resume` — the
+same path used after a successful evolve. Build failure refuses the relaunch
+(loud `log.err` + `loop:error` event) so we never re-exec into a broken
+binary; the loop rolls forward instead. Defense in depth in
+`skills/orchestrate/SKILL.md`: a new "Mandatory `evolve` triggers" section
+makes 2x identical fallback verdicts an explicit `evolve` route in case the
+in-loop guard ever misses (e.g. a future internals path not covered by the
+heuristic). Regression tests in `test/metrics.test.ts` cover the heuristic
+matrix (positives for src/dist/skills/bin/package, negatives for
+WORKLOG/README/docs/tests/.autopilot) and the path-listing helper against a
+real ephemeral git repo. 200/200 tests pass (9 new); typecheck + build clean.
+
 ## 2026-04-29 — judge: capture SDK end-subtype, strengthen JSON-tail prompt (S-023)
 
 Iter 5's judge ran 112 events of analysis, produced detailed concluding

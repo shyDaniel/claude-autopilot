@@ -61,6 +61,47 @@ export function fullDiffBetween(repo: string, from: string | null, to: string | 
   }
 }
 
+/**
+ * List repo-relative file paths that changed between two SHAs (one entry per
+ * file, deduped, blank lines filtered). Returns [] if the range is empty or
+ * the repo is not a git checkout. Used by the self-drive auto-relaunch path
+ * to decide whether the latest worker commit shipped autopilot internals
+ * that the running parent process won't pick up without a re-exec.
+ */
+export function changedPathsBetween(repo: string, from: string | null, to: string | null): string[] {
+  if (!existsSync(join(repo, '.git'))) return [];
+  if (!from || !to || from === to) return [];
+  try {
+    const out = execFileSync('git', ['-C', repo, 'diff', '--name-only', `${from}..${to}`], {
+      encoding: 'utf8',
+      maxBuffer: 10 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return Array.from(new Set(out.split('\n').map((s) => s.trim()).filter(Boolean)));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * True when any of `changedPaths` is an autopilot internal that the running
+ * parent process has cached in memory: source under `src/`, compiled output
+ * under `dist/`, skill prompts under `skills/`, package metadata, or the
+ * autopilot bin entry. These are exactly the files whose content reaches
+ * the live loop only after a re-exec.
+ */
+export function touchesAutopilotInternals(changedPaths: string[]): boolean {
+  return changedPaths.some(
+    (p) =>
+      p === 'package.json' ||
+      p === 'package-lock.json' ||
+      p.startsWith('src/') ||
+      p.startsWith('dist/') ||
+      p.startsWith('skills/') ||
+      p.startsWith('bin/'),
+  );
+}
+
 function git(repo: string, args: string[]): string {
   try {
     return execFileSync('git', ['-C', repo, ...args], {

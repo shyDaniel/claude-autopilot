@@ -12,7 +12,8 @@ export type EventKind =
   | 'error'
   | 'stagnation'
   | 'commit'
-  | 'heartbeat';
+  | 'heartbeat'
+  | 'self-relaunch';
 
 export interface AutopilotEvent {
   ts: string;

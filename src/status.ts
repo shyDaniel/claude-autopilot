@@ -29,7 +29,7 @@ export interface StatusSnapshot {
   stagnationThreshold: number;
   maxIterations: number | null;
   commitsSinceStart: number;
-  stopReason?: 'done' | 'stagnant' | 'max_iterations' | 'error' | 'interrupted';
+  stopReason?: 'done' | 'stagnant' | 'max_iterations' | 'error' | 'interrupted' | 'self_relaunch';
   stopMessage?: string;
 }
 

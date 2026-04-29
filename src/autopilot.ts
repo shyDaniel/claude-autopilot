@@ -1,6 +1,7 @@
 import { resolve, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { writeFile, mkdir } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { log } from './logging.js';
 import { runJudge, type Verdict } from './judge.js';
 import { runWorker } from './worker.js';
@@ -10,8 +11,10 @@ import { freshState, loadState, saveState, type AutopilotState } from './state.j
 import { EventLog } from './events.js';
 import { StatusWriter } from './status.js';
 import {
+  changedPathsBetween,
   detectStagnation,
   snapshotRepo,
+  touchesAutopilotInternals,
   type IterationSnapshot,
 } from './metrics.js';
 import { writeIterationArtifacts, writeStagnationReport } from './artifacts.js';
@@ -639,6 +642,70 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
     });
 
     await events.emit({ iter: state.iteration, phase: 'loop', kind: 'end' });
+
+    // Self-drive stale-dist guard. When autopilot is driving its own source
+    // and the worker just committed changes that touch our internals
+    // (src/, dist/, skills/, package.json, bin/), the running parent has the
+    // pre-commit dist cached in Node's module loader — every subsequent
+    // judge/worker/orchestrate call would silently use the OLD code. The
+    // only honest fix is to re-exec (`relaunchAutopilot` + `--resume`) so
+    // the child loads the fresh build. We rebuild first because the work
+    // skill does not mandate `npm run build`; a broken build means we
+    // refuse to relaunch, log loudly, and roll forward. This is the
+    // textbook trigger called out in the orchestrator evolve report:
+    // "after a worker commit touches src/, when target===autopilotSource,
+    // call relaunchAutopilot so the freshly-built dist is actually loaded."
+    if (newCommits > 0) {
+      const detectedSource = opts.autopilotSource ?? detectAutopilotSource();
+      const isSelfDrive = detectedSource !== null && resolve(detectedSource) === repo;
+      if (isSelfDrive) {
+        const changed = changedPathsBetween(repo, beforeSnap.headSha, afterSnap.headSha);
+        if (touchesAutopilotInternals(changed)) {
+          log.warn(
+            `self-drive: worker commit touched autopilot internals (${changed
+              .filter((p) => p.startsWith('src/') || p.startsWith('dist/') || p.startsWith('skills/') || p === 'package.json' || p === 'package-lock.json' || p.startsWith('bin/'))
+              .slice(0, 6)
+              .join(', ')}${changed.length > 6 ? ', …' : ''}); rebuilding and relaunching to pick up fresh dist`,
+          );
+          let buildOk = true;
+          try {
+            execFileSync('npm', ['run', 'build', '--silent'], {
+              cwd: repo,
+              stdio: 'inherit',
+            });
+          } catch (err) {
+            buildOk = false;
+            log.err(
+              `self-drive rebuild failed: ${(err as Error).message}; refusing to relaunch (next iteration will roll forward against stale in-memory dist)`,
+            );
+            await events.emit({
+              iter: state.iteration,
+              phase: 'loop',
+              kind: 'error',
+              msg: `self-relaunch: build failed (${(err as Error).message})`,
+            });
+          }
+          if (buildOk) {
+            await saveState(repo, state);
+            await events.emit({
+              iter: state.iteration,
+              phase: 'loop',
+              kind: 'self-relaunch',
+              msg: 'rebuilt; re-execing to pick up fresh dist',
+              data: {
+                before: beforeSnap.headSha,
+                after: afterSnap.headSha,
+                touchedPaths: changed.slice(0, 20),
+              },
+            });
+            await status.update({ phase: 'stopped', stopReason: 'self_relaunch' });
+            log.banner('SELF-RELAUNCH');
+            exitCode = await relaunchAutopilot();
+            return exitCode;
+          }
+        }
+      }
+    }
 
     if (!opts.stagnationDisabled && opts.orchestratorDisabled) {
       // Legacy statistical stagnation path — only active when the orchestrator

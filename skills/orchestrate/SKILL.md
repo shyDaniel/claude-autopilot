@@ -89,6 +89,37 @@ Choose ONE of these next-skill options:
   cannot articulate what to change in autopilot, you do not have evidence
   to evolve yet.
 
+## Mandatory `evolve` triggers — do not paper over these
+
+If ANY of these patterns appears in the inputs, you MUST return
+`next_skill: "evolve"`. They are existence proofs that autopilot itself
+is the bottleneck and `work` cannot make progress:
+
+- **Repeated boilerplate fallback verdict.** The judge produced the
+  exact pre-S-022 string `"Re-run judge; ensure FINAL_GOAL.md is
+  present and well-formed."` (or any other clearly-templated fallback
+  whose `outstanding[0]` is byte-for-byte identical to the prior
+  iteration's `outstanding[0]`) for 2+ iterations in a row. This means
+  the judge is not actually evaluating the repo — it is hitting a
+  parse/runtime failure path. The worker has no actionable signal.
+  Set `evolve_target: "src/judge.ts"` (or the appropriate adapter)
+  and explain the symptom.
+- **Stale-dist self-drive recurring.** Recent commits show the worker
+  edited `src/`, `dist/`, `skills/`, or `package.json`, AND the
+  outstanding bullets keep flagging the SAME bug whose fix appears in
+  those very commits, AND the in-loop self-relaunch guard in
+  `src/autopilot.ts` did not fire. The remedy is to widen the
+  touched-internals heuristic (`touchesAutopilotInternals` in
+  `src/metrics.ts`) or to add a missing rebuild step. (Note: the
+  primary fix for this class is the auto-relaunch in `autopilot.ts`;
+  evolve only when that guard provably failed.)
+- **Worker repeatedly attempts the same edit and the diff is empty.**
+  Two iterations of `worker-transcript.md` show the worker calling
+  `Edit` on the same file with the same `old_string` and the commit
+  count never moves. Either the worker skill is letting it pretend
+  success, or the runtime adapter is silently swallowing the failure.
+  Evolve `skills/work/SKILL.md` or `src/worker.ts`.
+
 ## Output format — CRITICAL
 
 Your FINAL message must be a single fenced JSON block, NOTHING ELSE after it:
