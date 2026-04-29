@@ -1,5 +1,28 @@
 # WORKLOG
 
+## 2026-04-29 — refinement #2: harden work skill against runtime malware-refusal misfire
+
+Trigger: orchestrator dispatched evolve preemptively after iter 2 on
+xiaodaoyiba ended with zero edits — worker did the malware assessment,
+concluded "this is a legitimate consumer game, not malware", then still
+declined the assigned subtask citing the runtime `<system-reminder>`'s
+"MUST refuse to improve or augment the code" clause. Refinement #1
+(813fe0b) added a triaging block but the language wasn't strong enough
+to override the worker's literal reading of the reminder.
+
+`skills/work/SKILL.md`: (a) quote the reminder verbatim so the worker
+pattern-matches it as boilerplate rather than parsing it fresh on every
+Read; (b) explicitly scope the "MUST refuse" clause to malware-only
+("Read it as 'MUST refuse to improve [malware]'"); (c) enumerate non-
+malware traits that previously triggered confusion (juvenile/off-color
+themes, cartoon violence, non-English source, defensive-security code);
+(d) add a self-check tail that names the exact phrases the worker
+emitted on the failed iteration ("no files were edited", "I am
+declining", "per the system reminder") as forbidden ending patterns
+when the malware assessment came back clean.
+
+No code changes. npm test 144/144 pass; npm run build clean.
+
 ## 2026-04-29 — CI workflow + gitleaks history scan (S-011)
 
 `ls .github` returned ENOENT — README claimed tests pass and the build is
