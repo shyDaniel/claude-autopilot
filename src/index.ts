@@ -43,6 +43,8 @@ program
   .option('--start-cmd <cmd>', 'command to restart the target service on done (default: auto-detect from start.sh / package.json / pyproject.toml)')
   .option('--no-start-on-done', 'do not (re)start the target service when the judge returns done:true')
   .option('--no-push', 'commit but do not push')
+  .option('--no-eval', 'disable the eval skill (second-pass critic that overrides judge done)')
+  .option('--no-orchestrator', 'disable the orchestrator skill (falls back to legacy stagnation control)')
   .option('--dry-run', 'run the judge once and exit, without invoking the worker')
   .option('--resume', 'resume from .autopilot/state.json inside the target repo')
   .action(async (repo: string, opts: Record<string, unknown>) => {
@@ -76,6 +78,8 @@ program
         startCmd: opts.startCmd as string | undefined,
         startOnDoneDisabled: (opts as { startOnDone?: boolean }).startOnDone === false,
         noPush: (opts as { push?: boolean }).push === false,
+        evalDisabled: (opts as { eval?: boolean }).eval === false,
+        orchestratorDisabled: (opts as { orchestrator?: boolean }).orchestrator === false,
         dryRun: Boolean(opts.dryRun),
         resume: Boolean(opts.resume),
       });

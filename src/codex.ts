@@ -9,7 +9,7 @@ import type { McpServerConfig } from './mcp.js';
 
 export interface CodexExecArgs {
   repoPath: string;
-  label: 'judge' | 'worker' | 'refine';
+  label: 'judge' | 'worker' | 'refine' | 'eval' | 'orchestrate';
   iteration: number;
   model: string;
   prompt: string;

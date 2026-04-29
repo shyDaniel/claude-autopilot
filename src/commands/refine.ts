@@ -13,7 +13,11 @@ import { runCodexExec } from '../codex.js';
 export interface RefineArgs {
   autopilotSource: string;
   targetRepo: string;
-  stagnationReportPath: string;
+  /**
+   * Path to the report that triggered this refinement. Either a stagnation
+   * report (legacy path) or an orchestrator verdict (skill-driven path).
+   */
+  triggerReportPath: string;
   refinementsSoFar: number;
   maxRefinements: number;
   selector: ModelSelector;
@@ -70,7 +74,7 @@ export async function runMetaRefinement(args: RefineArgs): Promise<RefineResult>
   log.banner('META-REFINEMENT');
   log.info(`autopilot source: ${autopilotSource}`);
   log.info(`target repo:      ${args.targetRepo}`);
-  log.info(`stagnation report: ${args.stagnationReportPath}`);
+  log.info(`trigger report:   ${args.triggerReportPath}`);
   log.info(`refinement #${args.refinementsSoFar + 1} / ${args.maxRefinements}`);
 
   await args.events.emit({
@@ -84,7 +88,7 @@ export async function runMetaRefinement(args: RefineArgs): Promise<RefineResult>
   const prompt = metaRefinePrompt({
     autopilotRepo: autopilotSource,
     targetRepo: args.targetRepo,
-    stagnationReportPath: args.stagnationReportPath,
+    triggerReportPath: args.triggerReportPath,
     recentIterationsPath: join(args.targetRepo, '.autopilot', 'iterations'),
     eventsPath: join(args.targetRepo, '.autopilot', 'events.jsonl'),
     refinementsSoFar: args.refinementsSoFar,

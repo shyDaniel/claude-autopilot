@@ -1,34 +1,60 @@
 # agent-autopilot
 
 > Zero-human-in-the-loop wrapper around Claude Code **or Codex**. Point it at
-> any repo with a `FINAL_GOAL.md`; it runs a judge/worker loop until the goal is
-> genuinely shipped — with live observability, sticky model fallback, and
-> self-refinement on stagnation so autopilot improves its own prompts and
-> architecture as it works.
+> any repo with a `FINAL_GOAL.md`; it runs a **skills-based** judge / eval /
+> orchestrator / worker / evolve loop until the project is genuinely shipped —
+> with live observability, sticky model fallback, and dynamic self-evolution
+> when autopilot itself is the bottleneck.
+
+## Skills
+
+Each phase of the loop is a file-backed `SKILL.md` under `skills/`:
+
+| Skill        | What it does                                                        |
+| ------------ | ------------------------------------------------------------------- |
+| `judge`      | Uncompromising shipping reviewer; returns `{done, outstanding}`.    |
+| `eval`       | Adversarial second-pass critic; **overrides** the judge's "done" if anything still feels off (a real-world judge can be overruled on appeal indefinitely; so can this one). |
+| `work`       | Implements one concrete chunk of outstanding work end-to-end.       |
+| `orchestrate`| Decides what runs next: `work` / `reframe` / `evolve` / `exit-stuck` based on the *actual* loop state — not Jaccard / commit counts. |
+| `reframe`    | Decomposes or rewrites a stuck subtask the worker keeps failing on. |
+| `evolve`     | Edits autopilot's own SKILL.md / source to fix a systemic gap.      |
+
+Editing a skill's SKILL.md is a no-code-change way to teach autopilot how to
+behave. The `evolve` skill itself reads other skills and edits them when
+the orchestrator decides autopilot is the bottleneck.
 
 ## What it does
 
 Every iteration:
 
 1. **Judge** — a read-mostly Claude or Codex session reads `FINAL_GOAL.md`,
-   walks the repo, runs tests, and returns a structured JSON verdict
-   `{done, summary, outstanding}`.
-2. **Worker** — if not done, a full-permission Claude or Codex session picks
-   one concrete chunk of outstanding work, implements it end-to-end, tests it,
-   commits, and pushes.
-3. **Sticky model fallback** — Claude defaults to
-   **Opus 4.7 → Sonnet 4.6**. Codex defaults to **GPT-5.5 → GPT-5.4**. On a
-   rate-limit / overload / quota error, autopilot transparently downgrades for
-   the rest of the run and keeps going.
-4. **Stagnation detector** — if the outstanding list stays ≥ 90% the same
-   and no commits land for N iterations, autopilot halts.
-5. **Self-refinement meta-loop** — on stagnation, a fresh session using the
-   selected runtime is spawned with `cwd=<agent-autopilot source repo>`. It reads the
-   stagnation report + recent worker transcripts, edits autopilot's own
-   prompts / architecture / source, runs tests + build (must pass),
-   commits, pushes, and then autopilot rebuilds and relaunches itself with
-   `--resume` so the target run continues with the improved tool.
-6. **Repeat** until the judge returns `done: true`.
+   walks the repo, runs tests, and returns `{done, summary, outstanding}`.
+2. **Eval (if judge says done)** — a separate adversarial critic session
+   drives the product like a real user, takes screenshots, and may overrule
+   the judge with a list of polish blockers. Eval can override `done`
+   indefinitely; only when **judge AND eval** both pass does autopilot ship.
+3. **Orchestrator** — given the latest verdict, the recent history, the plan
+   ledger, recent commits, and the last two worker transcripts, an
+   orchestrator session decides what to do next:
+   - `work` → run the worker (default)
+   - `reframe` → skip the worker; next iteration's judge will reframe a
+     specific stuck subtask
+   - `evolve` → spawn the meta-refinement agent in agent-autopilot's source
+     repo; it edits a `SKILL.md` or `src/` file, runs `npm test && npm run
+     build`, commits, pushes, and autopilot relaunches with `--resume`
+   - `exit-stuck` → halt; human attention required
+4. **Worker** — if `next_skill === "work"`, a full-permission session picks
+   one concrete chunk of outstanding work, implements it end-to-end, tests
+   it, commits, and pushes.
+5. **Sticky model fallback** — Claude defaults to **Opus 4.7 → Sonnet 4.6**;
+   Codex defaults to **GPT-5.5 → GPT-5.4**. The judge / worker downgrade on
+   quota errors, but eval and orchestrator are **strong-only** — these
+   decision points are too important to silently downgrade.
+6. **Repeat** until the judge AND eval both pass.
+
+Legacy statistical stagnation detection is still available behind
+`--no-orchestrator` for parity, but the orchestrator skill subsumes it
+dynamically by default.
 
 The worker is explicitly instructed to **never** ask clarifying questions — it
 spawns subagents or hits the web instead. All configured MCP servers are

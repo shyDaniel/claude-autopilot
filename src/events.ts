@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-export type EventPhase = 'loop' | 'judge' | 'worker';
+export type EventPhase = 'loop' | 'judge' | 'worker' | 'eval' | 'orchestrate';
 
 export type EventKind =
   | 'start'

@@ -157,3 +157,47 @@ through Codex `-c mcp_servers...` overrides.
 Updated prompts and docs to describe a selected "agent runtime" rather than a
 Claude-only flow. Added `test/codex.test.ts` to cover Codex MCP TOML override
 rendering.
+
+## 2026-04-29 — repo rename + skills-based redesign (v0.9.0)
+
+Renamed `claude-autopilot` → `agent-autopilot` (and `claude-code-bootstrap` →
+`agent-bootstrap`) since both projects are runtime-agnostic. `package.json`,
+banner, `detectAutopilotSource` pkg-name match (with backwards-compat for
+in-flight runs), READMEs, and ARCHITECTURE updated.
+
+Then refactored autopilot's prompt layer into **skills**:
+
+- New `skills/` directory: `judge`, `eval`, `work`, `orchestrate`, `reframe`,
+  `evolve`. Each is a SKILL.md with frontmatter (`name`, `description`,
+  `runtime`, `strongModelOnly`, `outputFormat`) and a templated body using
+  `{{var}}` substitution.
+- New [src/skills.ts](src/skills.ts): file-backed loader + renderer. Walks
+  `import.meta.url` to resolve `skills/` relative to package.json so it works
+  from `dist/`, `src/`, and globally-installed npm.
+- [src/prompts.ts](src/prompts.ts) reduced to thin shims over `loadSkill()`.
+- New [src/eval.ts](src/eval.ts): adversarial second-pass critic. After the
+  judge says done, eval runs as a separate session, drives the product, takes
+  screenshots, and may overrule the judge with a `passed: false` verdict.
+  Eval can override `done` indefinitely (no cap) — a real-world judge can be
+  overruled on appeal forever; so can this one.
+- New [src/orchestrator.ts](src/orchestrator.ts): replaces statistical
+  stagnation detection with a dynamic LLM-driven decision. Reads the latest
+  verdict, recent history, plan ledger, last 10 commits, last two worker
+  transcripts; outputs `next_skill: work | reframe | evolve | exit-stuck`.
+- Eval and orchestrator both run on the **strong model only** (no fallback) —
+  these decision points are too important to silently downgrade.
+- Legacy stagnation block in autopilot.ts is now gated behind
+  `opts.orchestratorDisabled` so the orchestrator subsumes it by default. The
+  evolve path is unchanged downstream — the trigger report (formerly
+  `stagnationReportPath`, now `triggerReportPath`) is just written by the
+  orchestrator instead of the Jaccard detector.
+- New CLI flags: `--no-eval`, `--no-orchestrator`. Existing flags preserved.
+- `package.json files[]` extended to ship `skills/` so installed packages can
+  resolve the SKILL.md paths.
+
+**Tests added:** `test/skills.test.ts` (15 cases — frontmatter parsing,
+template rendering, fixture-based loader, all six shipped skills render),
+`test/eval.test.ts` (7 cases — verdict parser), `test/orchestrator.test.ts`
+(8 cases — verdict parser, dispatch table). 135 tests total, all passing.
+
+Bumped to v0.9.0.

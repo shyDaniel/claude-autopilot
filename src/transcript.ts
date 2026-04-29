@@ -4,7 +4,7 @@ import type { EventLog } from './events.js';
 import type { StatusWriter } from './status.js';
 
 export interface PrintContext {
-  label: 'judge' | 'worker';
+  label: 'judge' | 'worker' | 'eval' | 'orchestrate';
   iteration: number;
   verbose: boolean;
   events: EventLog;

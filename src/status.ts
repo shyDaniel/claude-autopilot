@@ -1,7 +1,15 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-export type StatusPhase = 'starting' | 'judging' | 'working' | 'idle' | 'stopped';
+export type StatusPhase =
+  | 'starting'
+  | 'judging'
+  | 'evaluating'
+  | 'orchestrating'
+  | 'working'
+  | 'evolving'
+  | 'idle'
+  | 'stopped';
 
 export interface StatusSnapshot {
   repo: string;

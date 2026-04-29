@@ -1,8 +1,11 @@
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
 import { existsSync } from 'node:fs';
+import { writeFile, mkdir } from 'node:fs/promises';
 import { log } from './logging.js';
 import { runJudge, type Verdict } from './judge.js';
 import { runWorker } from './worker.js';
+import { runEval, type EvalVerdict } from './eval.js';
+import { runOrchestrator } from './orchestrator.js';
 import { freshState, loadState, saveState, type AutopilotState } from './state.js';
 import { EventLog } from './events.js';
 import { StatusWriter } from './status.js';
@@ -69,6 +72,17 @@ export interface AutopilotOptions {
   startOnDoneDisabled: boolean;
   maxSubtaskAttempts: number;
   runtime: AgentRuntime;
+  /**
+   * Disable the eval skill (the second-pass critic that overrides the
+   * judge's done verdict). Default: enabled. Disable only for debug runs.
+   */
+  evalDisabled: boolean;
+  /**
+   * Disable the orchestrator skill (decides next-skill dynamically).
+   * Default: enabled. When disabled, falls back to legacy stagnation-based
+   * control flow.
+   */
+  orchestratorDisabled: boolean;
 }
 
 const BASE_BACKOFF_MS = 4_000;
@@ -129,6 +143,16 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
       data: { from, to, reason },
     });
   });
+  // Eval and orchestrator both use a strong-only selector — no fallback,
+  // because these decision points are too important to silently downgrade.
+  const evalSelector = new ModelSelector(
+    { primary: opts.judgeModels.primary, fallback: opts.judgeModels.primary },
+    'judge',
+  );
+  const orchestratorSelector = new ModelSelector(
+    { primary: opts.judgeModels.primary, fallback: opts.judgeModels.primary },
+    'judge',
+  );
 
   await events.emit({
     iter: 0,
@@ -235,10 +259,66 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
     });
 
     if (verdict.done) {
-      log.ok('JUDGE VERDICT: done. FINAL_GOAL.md fully satisfied.');
+      log.ok('JUDGE VERDICT: done. Running EVAL skill as second-pass critic…');
       log.info(verdict.summary);
-      await events.emit({ iter: state.iteration, phase: 'loop', kind: 'end', msg: 'done' });
-      await status.update({ phase: 'stopped', stopReason: 'done', currentAction: undefined });
+
+      // Eval skill — adversarial second-pass critic. May overrule the judge
+      // indefinitely (no cap) per design. Only when BOTH judge AND eval pass
+      // does autopilot ship.
+      let evalVerdict: EvalVerdict | null = null;
+      if (!opts.evalDisabled) {
+        await status.update({ phase: 'evaluating', currentAction: undefined });
+        try {
+          evalVerdict = await runEval({
+            repoPath: repo,
+            iteration: state.iteration,
+            selector: evalSelector,
+            events,
+            status,
+            verbose: opts.verbose,
+            availableMcps: mcpSection,
+            judgeVerdict: verdict,
+            mcpServers,
+            runtime: opts.runtime,
+          });
+        } catch (err) {
+          log.err(`eval failed: ${(err as Error).message}; treating as not passed (will not ship)`);
+          evalVerdict = {
+            passed: false,
+            summary: `Eval crashed: ${(err as Error).message}`,
+            blockers: ['Eval crashed; re-run is needed before shipping.'],
+          };
+        }
+      } else {
+        log.warn('eval skill disabled (--no-eval); shipping on judge verdict alone');
+        evalVerdict = { passed: true, summary: 'eval skipped via --no-eval', blockers: [] };
+      }
+
+      if (!evalVerdict.passed) {
+        log.warn(`EVAL OVERRULED JUDGE: ${evalVerdict.blockers.length} blocker(s) — looping`);
+        for (const b of evalVerdict.blockers.slice(0, 8)) log.dim(`  - ${b}`);
+        // Treat eval blockers as the new outstanding work. Mutate verdict so
+        // downstream plan-reconciliation + worker see the eval findings as
+        // the authoritative outstanding list this iteration.
+        verdict.done = false;
+        verdict.summary = `EVAL OVERRULED JUDGE: ${evalVerdict.summary}`;
+        verdict.outstanding = [...evalVerdict.blockers, ...verdict.outstanding];
+        verdict.subtasks = [...(evalVerdict.subtasks ?? []), ...(verdict.subtasks ?? [])];
+        state.lastVerdict = { ...verdict, at: new Date().toISOString() };
+        await saveState(repo, state);
+        await status.update({
+          lastVerdict: {
+            done: false,
+            summary: verdict.summary,
+            outstandingCount: verdict.outstanding.length,
+            at: state.lastVerdict.at,
+          },
+        });
+        // Fall through to the rest of the iteration (worker etc).
+      } else {
+        log.ok('EVAL VERDICT: passed. Project is genuinely shipped.');
+        await events.emit({ iter: state.iteration, phase: 'loop', kind: 'end', msg: 'done' });
+        await status.update({ phase: 'stopped', stopReason: 'done', currentAction: undefined });
 
       let service: ServiceHandle | null = null;
       let serviceError: string | undefined;
@@ -280,6 +360,7 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
         report.markdown,
       );
       break;
+      }
     }
 
     // Big-progress detection BEFORE updating bigProgressState.prev.
@@ -346,6 +427,145 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
       break;
     }
 
+    // ORCHESTRATOR — decides which skill to run next given dynamic state.
+    // Replaces the legacy statistical stagnation detector. The orchestrator
+    // can dispatch: work | reframe | evolve | exit-stuck.
+    let orchestratorChoice: 'work' | 'reframe' | 'evolve' | 'exit-stuck' = 'work';
+    let orchestratorReason = '(orchestrator disabled)';
+    if (!opts.orchestratorDisabled && state.iteration >= 2) {
+      await status.update({ phase: 'orchestrating', currentAction: undefined });
+      const orch = await runOrchestrator({
+        repoPath: repo,
+        iteration: state.iteration,
+        runStartedAt: state.startedAt,
+        selector: orchestratorSelector,
+        events,
+        status,
+        verbose: opts.verbose,
+        judgeVerdict: verdict,
+        history,
+        plan,
+        refinementsSoFar: state.refinementsSoFar,
+        maxRefinements: opts.maxRefinements,
+        mcpServers,
+        runtime: opts.runtime,
+      });
+      orchestratorChoice = orch.next_skill;
+      orchestratorReason = orch.reason;
+    }
+
+    if (orchestratorChoice === 'exit-stuck') {
+      log.err(`orchestrator: exit-stuck (${truncate(orchestratorReason, 200)})`);
+      await events.emit({
+        iter: state.iteration,
+        phase: 'loop',
+        kind: 'end',
+        msg: 'orchestrator_exit_stuck',
+        data: { reason: orchestratorReason },
+      });
+      await status.update({ phase: 'stopped', stopReason: 'stagnant', stopMessage: orchestratorReason });
+      await notifier.sendImmediate(
+        'needs-attention',
+        `[autopilot] orchestrator stopped: ${nameFromPath(repo)} needs you`,
+        `Orchestrator decided no further automated progress is possible.\n\nReason: ${orchestratorReason}\n\nIteration: ${state.iteration}\n`,
+      );
+      exitCode = 3;
+      break;
+    }
+
+    if (orchestratorChoice === 'evolve') {
+      log.warn(`orchestrator: evolve (${truncate(orchestratorReason, 200)})`);
+      const triggerReportPath = await writeOrchestratorEvolveReport(
+        repo,
+        state.iteration,
+        orchestratorReason,
+        verdict,
+      );
+      await events.emit({
+        iter: state.iteration,
+        phase: 'loop',
+        kind: 'stagnation',
+        msg: 'orchestrator-evolve',
+        data: { report: triggerReportPath, reason: orchestratorReason },
+      });
+
+      if (!opts.autoRefine) {
+        log.err('orchestrator wants evolve but --no-auto-refine is set; exit 3');
+        await notifier.sendImmediate(
+          'needs-attention',
+          `[autopilot] orchestrator wants evolve but it's disabled: ${nameFromPath(repo)}`,
+          `Orchestrator: ${orchestratorReason}\nReport: ${triggerReportPath}\n`,
+        );
+        exitCode = 3;
+        break;
+      }
+
+      const autopilotSource = opts.autopilotSource ?? detectAutopilotSource();
+      if (!autopilotSource) {
+        log.err('orchestrator wants evolve but autopilot source not found; exit 3');
+        exitCode = 3;
+        break;
+      }
+      if (state.refinementsSoFar >= opts.maxRefinements) {
+        log.err(`auto-refine budget exhausted (${state.refinementsSoFar}/${opts.maxRefinements}); exit 3`);
+        exitCode = 3;
+        break;
+      }
+
+      await status.update({ phase: 'evolving', currentAction: undefined });
+      const refineSelector = new ModelSelector(opts.workerModels, 'worker');
+      const r = await runMetaRefinement({
+        autopilotSource,
+        targetRepo: repo,
+        triggerReportPath,
+        refinementsSoFar: state.refinementsSoFar,
+        maxRefinements: opts.maxRefinements,
+        selector: refineSelector,
+        events,
+        runtime: opts.runtime,
+      });
+
+      if (r.success) {
+        state.refinementsSoFar += 1;
+        await saveState(repo, state);
+        log.ok('evolve committed; relaunching autopilot with --resume');
+        await notifier.sendImmediate(
+          'self-refined',
+          `[autopilot] self-refined: ${nameFromPath(repo)} (refinement #${state.refinementsSoFar})`,
+          `Orchestrator triggered evolve.\n\nAutopilot commit: ${r.preHeadSha?.slice(0, 7)} → ${r.postHeadSha?.slice(0, 7)}\nRefinements so far: ${state.refinementsSoFar} / ${opts.maxRefinements}\nTranscript: ${r.transcriptPath}\nReason: ${orchestratorReason}\n`,
+        );
+        exitCode = await relaunchAutopilot();
+        break;
+      } else {
+        await writeRefinementFailureNote(repo, r.reason ?? 'unknown');
+        log.err(`evolve failed: ${r.reason}`);
+        await notifier.sendImmediate(
+          'needs-attention',
+          `[autopilot] evolve failed: ${nameFromPath(repo)} needs you`,
+          `Orchestrator triggered evolve, but the refinement attempt failed.\n\nIteration: ${state.iteration}\nOrchestrator reason: ${orchestratorReason}\nRefinement failure: ${r.reason}\n`,
+        );
+        exitCode = 3;
+        break;
+      }
+    }
+
+    if (orchestratorChoice === 'reframe') {
+      log.info(`orchestrator: reframe (${truncate(orchestratorReason, 200)}) — skipping worker, next iter judge will reframe`);
+      // Skip the worker this iteration; next judge call will see the
+      // stuck-subtask brief and reframe via JSON output.
+      history.push({
+        iter: state.iteration,
+        outstanding: verdict.outstanding,
+        outstandingSummary: verdict.summary,
+        headSha: beforeSnap.headSha,
+        commitCountTotal: beforeSnap.commitCountTotal,
+      });
+      await events.emit({ iter: state.iteration, phase: 'loop', kind: 'end', msg: 'orchestrator-reframe' });
+      await sleep(1000);
+      continue;
+    }
+
+    // Default: orchestratorChoice === 'work' (or orchestrator disabled).
     await status.update({ phase: 'working', currentAction: undefined });
 
     let workerTranscript = '';
@@ -413,7 +633,9 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
 
     await events.emit({ iter: state.iteration, phase: 'loop', kind: 'end' });
 
-    if (!opts.stagnationDisabled) {
+    if (!opts.stagnationDisabled && opts.orchestratorDisabled) {
+      // Legacy statistical stagnation path — only active when the orchestrator
+      // skill is disabled. The orchestrator subsumes this dynamically.
       const stag = detectStagnation(history, opts.stagnationThreshold);
       const stagnant = countTrailingStagnant(history, opts.stagnationThreshold);
       await status.update({ stagnantIterations: stagnant });
@@ -455,7 +677,7 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
           const r = await runMetaRefinement({
             autopilotSource,
             targetRepo: repo,
-            stagnationReportPath: reportPath,
+            triggerReportPath: reportPath,
             refinementsSoFar: state.refinementsSoFar,
             maxRefinements: opts.maxRefinements,
             selector: refineSelector,
@@ -577,6 +799,51 @@ async function writeStagnationReportFull(
   ].join('\n');
 
   return await writeStagnationReport(repo, body);
+}
+
+async function writeOrchestratorEvolveReport(
+  repo: string,
+  iteration: number,
+  reason: string,
+  verdict: Verdict,
+): Promise<string> {
+  const dir = join(repo, '.autopilot');
+  await mkdir(dir, { recursive: true });
+  const path = join(dir, 'STAGNATION_REPORT.md');
+  const body = [
+    '# ORCHESTRATOR EVOLVE REPORT',
+    '',
+    `The orchestrator skill decided agent-autopilot itself should be evolved`,
+    `at iteration ${iteration}. This is the trigger report for the meta-refinement`,
+    `agent.`,
+    '',
+    `- Repo: \`${repo}\``,
+    `- Detected: ${new Date().toISOString()}`,
+    '',
+    '## Orchestrator reason',
+    '',
+    reason,
+    '',
+    '## Latest judge verdict',
+    '',
+    '```json',
+    JSON.stringify(verdict, null, 2),
+    '```',
+    '',
+    '## What to look at',
+    '',
+    '1. Read this report.',
+    '2. Read `.autopilot/iterations/<latest>/worker-transcript.md` for the most',
+    '   recent worker activity.',
+    '3. Read `.autopilot/events.jsonl` for the full event stream.',
+    '4. Decide whether the symptom belongs in:',
+    '   - `skills/<name>/SKILL.md` — prompt-level fix (most common)',
+    '   - `src/<module>.ts` — code-level fix',
+    '5. Make the surgical fix, run npm test + npm run build, commit, push.',
+    '',
+  ].join('\n');
+  await writeFile(path, body, 'utf8');
+  return path;
 }
 
 async function backoff(attempt: number, err: Error): Promise<void> {
