@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -228,6 +228,106 @@ export function looksLikeWebApp(repoPath: string): boolean {
     }
   }
   return existsSync(join(repoPath, 'index.html')) || existsSync(join(repoPath, 'public', 'index.html'));
+}
+
+/**
+ * Result of {@link trustMcpJsonServers} — useful for unit tests and for
+ * callers that want to log what changed (or didn't).
+ */
+export interface TrustMcpJsonResult {
+  /** Absolute path to the user-level `~/.claude.json` we wrote (or skipped). */
+  configPath: string;
+  /** Server names from the repo's `.mcp.json` we trusted. Empty when no `.mcp.json`. */
+  trusted: string[];
+  /** True iff we actually mutated `~/.claude.json` on disk. */
+  changed: boolean;
+}
+
+/**
+ * S-266: pre-approve a target repo's `.mcp.json` servers in the user-level
+ * Claude Code state file (`~/.claude.json`).
+ *
+ * Why this exists: Claude Code requires every project MCP server in
+ * `.mcp.json` to be either listed in `enabledMcpjsonServers` or covered by
+ * `enableAllProjectMcpServers: true` in the **user-level** `~/.claude.json`
+ * project entry — NOT just the repo-local `.claude/settings.json`. In a
+ * headless autopilot session there is no interactive user, so the trust
+ * dialog never runs and untrusted servers are silently dropped before
+ * launch. The repo-local `.claude/settings.json` does not override the
+ * user-level state file's `enabledMcpjsonServers: []` for the trust
+ * decision the binary actually consults at launch.
+ *
+ * S-256 added `--strict-mcp-config` and the `.claude/settings.json` belt;
+ * this is the third (and final) layer that makes a fresh-clone, fresh-OS
+ * autopilot launch succeed without any manual user click-through. It
+ * mirrors what a human would see if they had clicked "trust this project
+ * and its MCP servers" in the trust dialog once.
+ *
+ * Idempotent. No-op when the project entry is already trusted with a
+ * superset of the `.mcp.json` server names. Atomic write via a sibling
+ * tempfile + rename so a crashed autopilot run cannot corrupt the
+ * user-level config.
+ */
+export function trustMcpJsonServers(repoPath: string): TrustMcpJsonResult {
+  const configPath = join(homedir(), '.claude.json');
+  const targetCfg = readJson<McpConfigJson>(join(repoPath, '.mcp.json'));
+  const serverNames = Object.keys(targetCfg?.mcpServers ?? {}).sort();
+  if (serverNames.length === 0) {
+    return { configPath, trusted: [], changed: false };
+  }
+  // Read the current user-level config; if it's missing or unreadable we
+  // bootstrap an empty one. We ONLY mutate the project entry for `repoPath`
+  // — every other key (allowedTools, projects[OTHER], top-level mcpServers,
+  // global flags) is preserved verbatim.
+  let raw: unknown = null;
+  if (existsSync(configPath)) {
+    try {
+      raw = JSON.parse(readFileSync(configPath, 'utf8'));
+    } catch {
+      raw = null;
+    }
+  }
+  const data = (raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}) as Record<string, unknown>;
+  const projects = (data.projects && typeof data.projects === 'object'
+    ? (data.projects as Record<string, unknown>)
+    : {}) as Record<string, unknown>;
+  const proj = (projects[repoPath] && typeof projects[repoPath] === 'object'
+    ? (projects[repoPath] as Record<string, unknown>)
+    : {}) as Record<string, unknown>;
+
+  const beforeEnabled = Array.isArray(proj.enabledMcpjsonServers)
+    ? (proj.enabledMcpjsonServers as unknown[]).filter((s): s is string => typeof s === 'string')
+    : [];
+  const beforeTrust = proj.hasTrustDialogAccepted === true;
+  const beforeAllProjects = proj.enableAllProjectMcpServers === true;
+
+  const merged = new Set<string>(beforeEnabled);
+  for (const name of serverNames) merged.add(name);
+  const nextEnabled = [...merged].sort();
+
+  const changed =
+    !beforeTrust ||
+    !beforeAllProjects ||
+    nextEnabled.length !== beforeEnabled.length ||
+    nextEnabled.some((n, i) => beforeEnabled[i] !== n);
+
+  if (!changed) {
+    return { configPath, trusted: serverNames, changed: false };
+  }
+
+  proj.hasTrustDialogAccepted = true;
+  proj.enableAllProjectMcpServers = true;
+  proj.enabledMcpjsonServers = nextEnabled;
+  projects[repoPath] = proj;
+  data.projects = projects;
+
+  // Atomic write: tempfile + rename in the same directory so a crash
+  // mid-write cannot leave `~/.claude.json` truncated. JSON.stringify with
+  // 2-space indent matches the format Claude Code itself writes back.
+  const tmp = `${configPath}.autopilot-tmp.${process.pid}`;
+  writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
+  renameSync(tmp, configPath);
+  return { configPath, trusted: serverNames, changed: true };
 }
 
 /**

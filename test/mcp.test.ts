@@ -12,6 +12,7 @@ import {
   looksLikeWebApp,
   renderMcpSection,
   resolveMcpServers,
+  trustMcpJsonServers,
 } from '../src/mcp.js';
 
 describe('buildBuiltInMcps', () => {
@@ -407,5 +408,173 @@ describe('CLI metadata commands stay silent on MCP config (S-017 regression)', (
     const r = runCli(['run', '--help']);
     expect(r.combined).not.toMatch(/browserbase MCP disabled/);
     expect(r.combined).not.toMatch(/MCPs injected/);
+  });
+});
+
+describe('trustMcpJsonServers (S-266)', () => {
+  let dir: string;
+  let homeDir: string;
+  let prevHome: string | undefined;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'autopilot-mcp-trust-'));
+    homeDir = await mkdtemp(join(tmpdir(), 'autopilot-home-trust-'));
+    prevHome = process.env.HOME;
+    process.env.HOME = homeDir;
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+    await rm(homeDir, { recursive: true, force: true });
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+  });
+
+  it('returns trusted=[] and changed=false when repo has no .mcp.json', () => {
+    const r = trustMcpJsonServers(dir);
+    expect(r.trusted).toEqual([]);
+    expect(r.changed).toBe(false);
+  });
+
+  it('writes trust state for .mcp.json servers when ~/.claude.json is missing', async () => {
+    await writeFile(
+      join(dir, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          playwright: { command: 'npx', args: ['-y', '@playwright/mcp'] },
+          'chrome-devtools': { command: 'npx', args: ['-y', 'chrome-devtools-mcp'] },
+        },
+      }),
+      'utf8',
+    );
+    const r = trustMcpJsonServers(dir);
+    expect(r.trusted).toEqual(['chrome-devtools', 'playwright']);
+    expect(r.changed).toBe(true);
+    const written = JSON.parse(readFileSync(join(homeDir, '.claude.json'), 'utf8'));
+    const proj = written.projects[dir];
+    expect(proj.hasTrustDialogAccepted).toBe(true);
+    expect(proj.enableAllProjectMcpServers).toBe(true);
+    expect(proj.enabledMcpjsonServers).toEqual(['chrome-devtools', 'playwright']);
+  });
+
+  it('preserves unrelated keys and other projects in ~/.claude.json', async () => {
+    await writeFile(
+      join(dir, '.mcp.json'),
+      JSON.stringify({ mcpServers: { playwright: { command: 'npx' } } }),
+      'utf8',
+    );
+    await writeFile(
+      join(homeDir, '.claude.json'),
+      JSON.stringify({
+        firstStartTime: '2024-01-01',
+        projects: {
+          '/some/other/repo': { hasTrustDialogAccepted: true, foo: 'bar' },
+          [dir]: { allowedTools: ['Read', 'Edit'], exampleFiles: ['x.ts'] },
+        },
+        mcpServers: { sentinel: { command: 'echo' } },
+      }),
+      'utf8',
+    );
+    const r = trustMcpJsonServers(dir);
+    expect(r.changed).toBe(true);
+    const written = JSON.parse(readFileSync(join(homeDir, '.claude.json'), 'utf8'));
+    expect(written.firstStartTime).toBe('2024-01-01');
+    expect(written.mcpServers.sentinel.command).toBe('echo');
+    expect(written.projects['/some/other/repo']).toEqual({
+      hasTrustDialogAccepted: true,
+      foo: 'bar',
+    });
+    expect(written.projects[dir].allowedTools).toEqual(['Read', 'Edit']);
+    expect(written.projects[dir].exampleFiles).toEqual(['x.ts']);
+    expect(written.projects[dir].hasTrustDialogAccepted).toBe(true);
+    expect(written.projects[dir].enableAllProjectMcpServers).toBe(true);
+    expect(written.projects[dir].enabledMcpjsonServers).toEqual(['playwright']);
+  });
+
+  it('is idempotent — second call with the same .mcp.json returns changed=false', async () => {
+    await writeFile(
+      join(dir, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: { playwright: { command: 'npx' }, 'chrome-devtools': { command: 'npx' } },
+      }),
+      'utf8',
+    );
+    const first = trustMcpJsonServers(dir);
+    expect(first.changed).toBe(true);
+    const second = trustMcpJsonServers(dir);
+    expect(second.changed).toBe(false);
+    expect(second.trusted).toEqual(['chrome-devtools', 'playwright']);
+  });
+
+  it('merges new servers with previously-trusted ones (does not drop pre-existing names)', async () => {
+    // Pretend a prior session trusted just chrome-devtools.
+    await writeFile(
+      join(homeDir, '.claude.json'),
+      JSON.stringify({
+        projects: {
+          [dir]: {
+            hasTrustDialogAccepted: true,
+            enableAllProjectMcpServers: true,
+            enabledMcpjsonServers: ['chrome-devtools'],
+          },
+        },
+      }),
+      'utf8',
+    );
+    // Now .mcp.json adds playwright + a custom server.
+    await writeFile(
+      join(dir, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          playwright: { command: 'npx' },
+          custom: { command: 'node', args: ['x.js'] },
+        },
+      }),
+      'utf8',
+    );
+    const r = trustMcpJsonServers(dir);
+    expect(r.changed).toBe(true);
+    expect(r.trusted).toEqual(['custom', 'playwright']);
+    const written = JSON.parse(readFileSync(join(homeDir, '.claude.json'), 'utf8'));
+    expect(written.projects[dir].enabledMcpjsonServers).toEqual(['chrome-devtools', 'custom', 'playwright']);
+  });
+
+  it('flips trust flags from false to true even when server list is already complete', async () => {
+    await writeFile(
+      join(homeDir, '.claude.json'),
+      JSON.stringify({
+        projects: {
+          [dir]: {
+            hasTrustDialogAccepted: false,
+            enableAllProjectMcpServers: false,
+            enabledMcpjsonServers: ['playwright'],
+          },
+        },
+      }),
+      'utf8',
+    );
+    await writeFile(
+      join(dir, '.mcp.json'),
+      JSON.stringify({ mcpServers: { playwright: { command: 'npx' } } }),
+      'utf8',
+    );
+    const r = trustMcpJsonServers(dir);
+    expect(r.changed).toBe(true);
+    const written = JSON.parse(readFileSync(join(homeDir, '.claude.json'), 'utf8'));
+    expect(written.projects[dir].hasTrustDialogAccepted).toBe(true);
+    expect(written.projects[dir].enableAllProjectMcpServers).toBe(true);
+  });
+
+  it('treats malformed ~/.claude.json as empty and writes a valid file', async () => {
+    await writeFile(join(homeDir, '.claude.json'), 'not valid json {{{', 'utf8');
+    await writeFile(
+      join(dir, '.mcp.json'),
+      JSON.stringify({ mcpServers: { playwright: { command: 'npx' } } }),
+      'utf8',
+    );
+    const r = trustMcpJsonServers(dir);
+    expect(r.changed).toBe(true);
+    const written = JSON.parse(readFileSync(join(homeDir, '.claude.json'), 'utf8'));
+    expect(written.projects[dir].enabledMcpjsonServers).toEqual(['playwright']);
   });
 });

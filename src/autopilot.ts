@@ -41,7 +41,13 @@ import {
 } from './notifier.js';
 import { detectStartCmd, startService, type ServiceHandle } from './service.js';
 import { printBanner, writeFinalReport } from './finalReport.js';
-import { detectAvailableMcps, looksLikeWebApp, renderMcpSection, resolveMcpServers } from './mcp.js';
+import {
+  detectAvailableMcps,
+  looksLikeWebApp,
+  renderMcpSection,
+  resolveMcpServers,
+  trustMcpJsonServers,
+} from './mcp.js';
 import {
   loadPlan,
   savePlan,
@@ -129,6 +135,28 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
     `MCPs injected into every session: ${Object.keys(mcpServers).sort().join(', ') || '(none)'}` +
       (isWebApp ? '  [web app detected]' : ''),
   );
+  // S-266: pre-approve `.mcp.json` servers in the user-level Claude Code
+  // state file so the trust gate doesn't silently drop them in the headless
+  // session we're about to spawn. Idempotent; safe to run on every launch.
+  // S-256's `.claude/settings.json` belt + `--strict-mcp-config` flag are
+  // necessary but not sufficient — Claude Code consults the user-level
+  // `~/.claude.json` projects[repo] entry for trust regardless of the
+  // repo-local settings, so without this step the .mcp.json servers fall
+  // back to the built-in npx defaults (no LD_LIBRARY_PATH, no executable
+  // override) and every browser MCP call errors with "Chromium
+  // distribution 'chrome' is not found at /opt/google/chrome/chrome". See
+  // xiaodaoyiba-v2 §S-266 for the full repro and fix rationale.
+  try {
+    const trustResult = trustMcpJsonServers(repo);
+    if (trustResult.trusted.length > 0) {
+      const verb = trustResult.changed ? 'pre-approved' : 'already trusted';
+      log.info(
+        `MCP trust gate: ${verb} .mcp.json servers (${trustResult.trusted.join(', ')}) in ${trustResult.configPath}`,
+      );
+    }
+  } catch (err) {
+    log.warn(`MCP trust gate: could not pre-approve .mcp.json servers: ${(err as Error).message}`);
+  }
 
   const notifier = new Notifier(loadNotifierConfig(opts.emailDisabled));
   const bigProgressState: BigProgressState = { baseline: null, prev: null };
