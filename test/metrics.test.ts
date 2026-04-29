@@ -9,6 +9,7 @@ import {
   jaccard,
   normalizeBullet,
   touchesAutopilotInternals,
+  workingTreeStatus,
   type IterationSnapshot,
 } from '../src/metrics.js';
 
@@ -166,5 +167,101 @@ describe('changedPathsBetween (S-024 self-drive guard)', () => {
   it('returns [] for a non-git path', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'autopilot-changedpaths-nogit-'));
     expect(changedPathsBetween(tmp, 'a', 'b')).toEqual([]);
+  });
+});
+
+describe('workingTreeStatus (S-029 half-wired-tree detector)', () => {
+  const initRepo = (): { tmp: string; sh: (args: string[]) => string } => {
+    const tmp = mkdtempSync(join(tmpdir(), 'autopilot-wt-'));
+    const sh = (args: string[]): string =>
+      execFileSync('git', ['-C', tmp, ...args], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: 't',
+          GIT_AUTHOR_EMAIL: 't@t',
+          GIT_COMMITTER_NAME: 't',
+          GIT_COMMITTER_EMAIL: 't@t',
+        },
+      }).trim();
+    sh(['init', '-q', '-b', 'main']);
+    sh(['config', 'user.email', 't@t']);
+    sh(['config', 'user.name', 't']);
+    writeFileSync(join(tmp, 'README.md'), 'x\n');
+    sh(['add', 'README.md']);
+    sh(['commit', '-q', '-m', 'init']);
+    return { tmp, sh };
+  };
+
+  it('returns clean for a fresh post-commit working tree', () => {
+    const { tmp } = initRepo();
+    const wt = workingTreeStatus(tmp);
+    expect(wt.dirty).toBe(false);
+    expect(wt.modifiedFiles).toEqual([]);
+    expect(wt.untrackedFiles).toEqual([]);
+  });
+
+  it('reports unstaged modifications as modified, not untracked', () => {
+    const { tmp } = initRepo();
+    writeFileSync(join(tmp, 'README.md'), 'changed\n');
+    const wt = workingTreeStatus(tmp);
+    expect(wt.dirty).toBe(true);
+    expect(wt.modifiedFiles).toContain('README.md');
+    expect(wt.untrackedFiles).toEqual([]);
+  });
+
+  it('reports staged additions as modified', () => {
+    const { tmp, sh } = initRepo();
+    writeFileSync(join(tmp, 'new.ts'), 'export const x = 1;\n');
+    sh(['add', 'new.ts']);
+    const wt = workingTreeStatus(tmp);
+    expect(wt.dirty).toBe(true);
+    expect(wt.modifiedFiles).toContain('new.ts');
+    expect(wt.untrackedFiles).toEqual([]);
+  });
+
+  it('reports never-added files as untracked', () => {
+    const { tmp } = initRepo();
+    writeFileSync(join(tmp, 'orphan.ts'), 'export const y = 2;\n');
+    const wt = workingTreeStatus(tmp);
+    expect(wt.dirty).toBe(true);
+    expect(wt.modifiedFiles).toEqual([]);
+    expect(wt.untrackedFiles).toEqual(['orphan.ts']);
+  });
+
+  it('reproduces the iter-7 misfire signature: ≥1 modified + ≥1 untracked', () => {
+    // The exact failure shape: worker partially edited a tracked file
+    // (Character.ts) AND created a new file (EffectPlayer.ts) but never
+    // committed either. Both must surface so the orchestrator/next worker
+    // can see the recoverable in-flight work.
+    const { tmp, sh } = initRepo();
+    mkdirSync(join(tmp, 'src'));
+    writeFileSync(join(tmp, 'src/Character.ts'), 'export const c = 0;\n');
+    sh(['add', 'src/Character.ts']);
+    sh(['commit', '-q', '-m', 'add Character']);
+
+    writeFileSync(join(tmp, 'src/Character.ts'), 'export const c = 1; // partial edit\n');
+    writeFileSync(join(tmp, 'src/EffectPlayer.ts'), 'export class P {}\n');
+
+    const wt = workingTreeStatus(tmp);
+    expect(wt.dirty).toBe(true);
+    expect(wt.modifiedFiles).toEqual(['src/Character.ts']);
+    expect(wt.untrackedFiles).toEqual(['src/EffectPlayer.ts']);
+  });
+
+  it('handles paths with spaces correctly via NUL-delimited porcelain', () => {
+    const { tmp } = initRepo();
+    writeFileSync(join(tmp, 'has space.txt'), 'spaced\n');
+    const wt = workingTreeStatus(tmp);
+    expect(wt.untrackedFiles).toEqual(['has space.txt']);
+  });
+
+  it('returns clean for a non-git path without throwing', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'autopilot-wt-nogit-'));
+    const wt = workingTreeStatus(tmp);
+    expect(wt.dirty).toBe(false);
+    expect(wt.modifiedFiles).toEqual([]);
+    expect(wt.untrackedFiles).toEqual([]);
   });
 });

@@ -53,7 +53,9 @@ export async function runOrchestrator(args: OrchestrateArgs): Promise<Orchestrat
     ? recentHistory
         .map(
           (h) =>
-            `- iter ${h.iter} (HEAD ${h.headSha?.slice(0, 7) ?? 'n/a'}, total commits ${h.commitCountTotal}): ${
+            `- iter ${h.iter} (HEAD ${h.headSha?.slice(0, 7) ?? 'n/a'}, total commits ${h.commitCountTotal}${
+              h.halfWired ? ', HALF-WIRED-TREE' : ''
+            }): ${
               h.outstandingSummary?.slice(0, 200) ?? '(no summary)'
             }${(h.outstandingSummary?.length ?? 0) > 200 ? '…' : ''}`,
         )

@@ -1,5 +1,26 @@
 # WORKLOG
 
+## 2026-04-29 — orchestrator: half-wired-tree recovery, not evolve (S-029)
+
+Refinement #5/5 (final) for xiaodaoyiba-v2 run. Iter-7 trigger fired
+again despite four prior worker-SKILL refinements. Diagnosis: more
+SKILL prose was the wrong lever. The structural gap was that
+autopilot couldn't distinguish "worker did nothing" from "worker
+partially edited then refused", so the orchestrator was forced to
+burn a refinement slot on every recoverable misfire.
+
+Added `workingTreeStatus(repo)` (porcelain v1 -z parser) in
+`src/metrics.ts`, post-worker dirty-tree detection in
+`src/autopilot.ts` that emits a `half-wired-tree` event and tags
+the iteration in `IterationSnapshot`, surfacing in the
+orchestrator's history block as `HALF-WIRED-TREE`. Added a new
+section to `skills/orchestrate/SKILL.md`: first occurrence of that
+tag → dispatch `work` (the next worker's SKILL already has a
+recovery procedure for in-flight half-wired trees); only escalate
+to `evolve` if it recurs two iterations in a row. Result: 227
+tests pass, build clean. The recoverable misfire no longer costs a
+refinement slot.
+
 ## 2026-04-29 — worker: system-role malware-reminder neutralizer (S-028)
 
 Iter 7 on xiaodaoyiba-v2 still misfired (0 commits, half-wired tree)

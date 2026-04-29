@@ -15,6 +15,7 @@ import {
   detectStagnation,
   snapshotRepo,
   touchesAutopilotInternals,
+  workingTreeStatus,
   type IterationSnapshot,
 } from './metrics.js';
 import { writeIterationArtifacts, writeStagnationReport } from './artifacts.js';
@@ -620,6 +621,39 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
       });
     }
 
+    // Half-wired-tree detector. The iter-7 misfire on xiaodaoyiba-v2 was:
+    // worker self-confirmed the repo benign, partially wrote 3 source files,
+    // then refused mid-task citing the runtime malware-reminder, ending with
+    // 0 commits and a dirty working tree. That outcome was indistinguishable
+    // from "nothing happened" to autopilot, so the orchestrator burned the
+    // last refinement slot on it. Surfacing the dirty-tree fact lets the
+    // orchestrator dispatch `work` for an in-loop recovery instead of
+    // `evolve`, and is the structural counterpart to the worker SKILL's
+    // "Recovering an in-flight, half-wired tree" recovery procedure.
+    let halfWired = false;
+    if (newCommits === 0) {
+      const wt = workingTreeStatus(repo);
+      if (wt.dirty) {
+        halfWired = true;
+        const sample = [...wt.modifiedFiles, ...wt.untrackedFiles].slice(0, 8);
+        const more = wt.modifiedFiles.length + wt.untrackedFiles.length - sample.length;
+        log.warn(
+          `worker ended with 0 commits but dirty tree (${wt.modifiedFiles.length} modified, ` +
+            `${wt.untrackedFiles.length} untracked): ${sample.join(', ')}${more > 0 ? `, +${more} more` : ''}`,
+        );
+        await events.emit({
+          iter: state.iteration,
+          phase: 'loop',
+          kind: 'half-wired-tree',
+          msg: `0 commits, ${wt.modifiedFiles.length}M ${wt.untrackedFiles.length}U`,
+          data: {
+            modifiedFiles: wt.modifiedFiles,
+            untrackedFiles: wt.untrackedFiles,
+          },
+        });
+      }
+    }
+
     const iterDir = await writeIterationArtifacts(repo, {
       iter: state.iteration,
       verdict,
@@ -636,6 +670,7 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
       outstandingSummary: verdict.summary,
       headSha: afterSnap.headSha,
       commitCountTotal: afterSnap.commitCountTotal,
+      halfWired,
     });
     await status.update({
       commitsSinceStart: afterSnap.commitCountTotal - initialSnap.commitCountTotal,

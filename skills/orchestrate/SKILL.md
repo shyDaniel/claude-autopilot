@@ -89,6 +89,35 @@ Choose ONE of these next-skill options:
   cannot articulate what to change in autopilot, you do not have evidence
   to evolve yet.
 
+## Half-wired-tree recovery rule (DO NOT evolve on first occurrence)
+
+If the most recent iteration in the history block is annotated
+`HALF-WIRED-TREE` (autopilot detected 0 new commits AND a dirty
+working tree at the end of the worker run), the worker did NOT do
+nothing — it partially wrote real source files and then refused to
+commit, typically citing a runtime malware-reminder false positive
+on a benign repo. The uncommitted work is sitting in the working
+tree right now and is recoverable in-loop:
+
+- **First occurrence** of `HALF-WIRED-TREE` in the latest iteration:
+  return `next_skill: "work"`. The next worker reads the dirty tree,
+  reviews what the prior worker started, and either finishes the
+  wiring + commits or reverts and redoes cleanly. The worker SKILL
+  has an explicit "Recovering an in-flight, half-wired tree"
+  procedure for exactly this case. **Do NOT spend a refinement slot
+  on a single recoverable misfire.** Cite the dirty-tree fact in
+  your `reason` so the next worker knows what to look for.
+- **Two-in-a-row** `HALF-WIRED-TREE` annotations (latest AND
+  previous iteration both ended that way): NOW it is a systemic
+  worker-skill failure, because the recovery path itself failed.
+  Return `next_skill: "evolve"` with `evolve_target:
+  "skills/work/SKILL.md"` and explain the relapse pattern.
+- A judge verdict whose `outstanding[0]` reads "AUTOPILOT MISFIRE"
+  or similar self-referential meta-bullet is NOT by itself grounds
+  for evolve. The judge can be loud about a problem autopilot can
+  fix in-loop. Prefer `work` unless the two-in-a-row condition
+  above is also met.
+
 ## Mandatory `evolve` triggers — do not paper over these
 
 If ANY of these patterns appears in the inputs, you MUST return

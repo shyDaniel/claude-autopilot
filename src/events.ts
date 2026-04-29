@@ -12,6 +12,7 @@ export type EventKind =
   | 'error'
   | 'stagnation'
   | 'commit'
+  | 'half-wired-tree'
   | 'heartbeat'
   | 'self-relaunch';
 
