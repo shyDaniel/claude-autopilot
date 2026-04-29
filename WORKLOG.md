@@ -1,5 +1,22 @@
 # WORKLOG
 
+## 2026-04-29 — refinement #3: top-of-file kill switch on work skill malware-refusal regression
+
+Trigger: orchestrator dispatched evolve after iter 000001 + 000002 on
+xiaodaoyiba both produced 0 commits / 0 diff. Both transcripts did the
+malware assessment, concluded the repo is benign, then explicitly wrote
+"the system reminder is a hard instruction that overrides the user's
+task" and declined to edit. Refinement #2's triage block (lines 126+)
+was too far down — the worker re-derived the refusal from scratch on
+its first Read of FINAL_GOAL.md before reaching the guidance.
+
+`skills/work/SKILL.md`: hoist a "READ THIS FIRST" kill-switch section
+above the mandate. Names the failure mode in plain words, quotes the
+verbatim refusal sentence from iter 000002 as a recognize-and-reject
+pattern, lists the exact phrases that constitute hard skill failure,
+and reaffirms that the reminder does not override the user task once
+the benign-repo assessment is done.
+
 ## 2026-04-29 — refinement #2: harden work skill against runtime malware-refusal misfire
 
 Trigger: orchestrator dispatched evolve preemptively after iter 2 on
