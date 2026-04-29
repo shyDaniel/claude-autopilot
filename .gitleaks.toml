@@ -18,6 +18,21 @@ title = "agent-autopilot gitleaks config"
 [extend]
 useDefault = true
 
+# Custom rule: Browserbase API tokens have a distinctive `bb_live_` /
+# `bb_test_` prefix followed by a high-entropy alphanumeric body. This
+# rule catches them regardless of the surrounding variable name (the
+# default `generic-api-key` rule only fires when nearby text contains
+# words like "key" / "secret" / "token", which misses constants named
+# e.g. `SYNTHETIC_LEAK`). Adding it here prevents a regression of the
+# exact class that leaked in commit cbcca74.
+[[rules]]
+id = "browserbase-api-key"
+description = "Browserbase API key (bb_live_… or bb_test_…)"
+regex = '''bb_(?:live|test)_[A-Za-z0-9]{20,}'''
+keywords = ["bb_live_", "bb_test_"]
+entropy = 3.5
+
+
 [allowlist]
 description = "Known historical leaks tracked as debt; see WORKLOG.md S-001"
 # Specific commit that introduced the leaked Browserbase key.
