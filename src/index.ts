@@ -6,6 +6,7 @@ import { defaultJudgeModels, defaultWorkerModels, normalizeAgentRuntime } from '
 import { statusCommand } from './commands/status.js';
 import { watchCommand } from './commands/watch.js';
 import { logCommand } from './commands/log.js';
+import { reportCommand } from './commands/report.js';
 import { log } from './logging.js';
 import { readPackageVersion } from './version.js';
 
@@ -122,6 +123,17 @@ program
   .option('--all', 'show all autopilot sessions, not just the most recent one')
   .action(async (repo: string, opts: { since?: number; tail?: number; all?: boolean }) => {
     process.exit(await logCommand(repo, opts));
+  });
+
+program
+  .command('report')
+  .description('print a structured graph of what happened during the most recent autopilot run')
+  .argument('[repo]', 'path to the target repository', '.')
+  .option('--json', 'emit raw structured JSON instead of the terminal graph (for scripts / dashboards)')
+  .option('--markdown', 'emit a markdown report (paste into PRs / docs)')
+  .option('--live', 'redraw the graph as new events stream in (Ctrl-C to exit)')
+  .action(async (repo: string, opts: { json?: boolean; markdown?: boolean; live?: boolean }) => {
+    process.exit(await reportCommand(repo, opts));
   });
 
 program.parseAsync(process.argv).catch((err: unknown) => {
