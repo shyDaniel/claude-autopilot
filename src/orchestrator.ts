@@ -114,6 +114,9 @@ export async function runOrchestrator(args: OrchestrateArgs): Promise<Orchestrat
         disallowedTools: ['Write', 'Edit', 'NotebookEdit'],
         model,
         mcpServers: args.mcpServers,
+        // S-256: see worker.ts — `--strict-mcp-config` keeps the
+        // orchestrator's MCP view consistent with worker/judge/eval.
+        strictMcpConfig: true,
         systemPrompt: {
           type: 'preset',
           preset: 'claude_code',

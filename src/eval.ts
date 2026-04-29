@@ -210,6 +210,11 @@ async function runEvalAttempt(args: EvalArgs, prompt: string, attemptNum: number
         disallowedTools: ['Write', 'Edit', 'NotebookEdit'],
         model,
         mcpServers: args.mcpServers,
+        // S-256: see worker.ts — `--strict-mcp-config` ensures the
+        // eval session inherits the merged MCP map (incl. repo .mcp.json
+        // overrides for browser MCPs) instead of Claude Code's silently-
+        // gated default set.
+        strictMcpConfig: true,
         ...(args.maxTurns ? { maxTurns: args.maxTurns } : {}),
         systemPrompt: {
           type: 'preset',

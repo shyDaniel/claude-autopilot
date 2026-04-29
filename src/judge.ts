@@ -177,6 +177,12 @@ async function runJudgeTurn(
         disallowedTools: ['Write', 'Edit', 'NotebookEdit'],
         model,
         mcpServers: args.mcpServers,
+        // S-256: see worker.ts — `--strict-mcp-config` is required so the
+        // merged `mcpServers` map wins over Claude Code's silent .mcp.json
+        // gating. Without it the judge cannot reach playwright /
+        // chrome-devtools MCPs in repos that ship a .mcp.json with the
+        // overrides baked in (the trust dialog never runs headless).
+        strictMcpConfig: true,
         ...(turnsCap ? { maxTurns: turnsCap } : {}),
         systemPrompt: {
           type: 'preset',

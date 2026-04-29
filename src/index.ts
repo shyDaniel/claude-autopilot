@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { basename } from 'node:path';
+import { existsSync } from 'node:fs';
 import { Command } from 'commander';
 import { runAutopilot } from './autopilot.js';
 import { defaultJudgeModels, defaultWorkerModels, normalizeAgentRuntime } from './model.js';
@@ -9,6 +10,38 @@ import { logCommand } from './commands/log.js';
 import { reportCommand } from './commands/report.js';
 import { log } from './logging.js';
 import { readPackageVersion } from './version.js';
+
+// S-256: launcher-level LD_LIBRARY_PATH safety net for browser MCPs.
+//
+// Some hosts ship a Playwright-managed Chromium (e.g.
+// ~/.cache/ms-playwright/chromium-*) that requires X11/atk/cups shared
+// libs not present at the host's default lib path; ops typically extract
+// them to /tmp/libs/extracted/usr/lib/x86_64-linux-gnu and expect every
+// browser-spawning child to inherit LD_LIBRARY_PATH pointing there.
+//
+// `.mcp.json`'s per-server `env` block already covers the happy path:
+// when the SDK forwards `--mcp-config` (and we now also pass
+// `--strict-mcp-config` — see worker.ts/judge.ts/eval.ts/orchestrator.ts),
+// each MCP server gets its own LD_LIBRARY_PATH. This block is the
+// suspenders for two scenarios the per-server env can't cover:
+//
+//   1. Built-in MCP servers (no .mcp.json override) inheriting the host's
+//      env — they would otherwise see a bare LD_LIBRARY_PATH and fail to
+//      launch chromium with "libnss3.so: cannot open shared object file".
+//   2. Any future MCP added to the merged map without an `env` block.
+//
+// We only act when the canonical extracted-libs dir exists, so this is a
+// no-op on hosts that have a system Chrome at /opt/google/chrome and don't
+// need the shim.
+const EXTRACTED_LIBS_DIR = '/tmp/libs/extracted/usr/lib/x86_64-linux-gnu';
+if (existsSync(EXTRACTED_LIBS_DIR)) {
+  const existing = process.env.LD_LIBRARY_PATH ?? '';
+  if (!existing.split(':').includes(EXTRACTED_LIBS_DIR)) {
+    process.env.LD_LIBRARY_PATH = existing
+      ? `${EXTRACTED_LIBS_DIR}:${existing}`
+      : EXTRACTED_LIBS_DIR;
+  }
+}
 
 const program = new Command();
 const invokedName = basename(process.argv[1] ?? 'autopilot').includes('codex') ? 'codex-autopilot' : 'autopilot';

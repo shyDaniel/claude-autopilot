@@ -114,6 +114,16 @@ export async function runWorker(args: WorkerArgs): Promise<WorkerResult> {
         permissionMode: 'bypassPermissions',
         model,
         mcpServers: args.mcpServers,
+        // S-256: force the SDK to pass `--strict-mcp-config` so the merged
+        // `mcpServers` map (built-ins + ~/.claude.json + repo .mcp.json) is
+        // the ONLY MCP config the spawned Claude Code session sees. Without
+        // this, Claude Code silently drops the .mcp.json servers when the
+        // project has no `enabledMcpjsonServers` entry — the trust dialog
+        // never runs in headless autopilot, so .mcp.json was effectively
+        // ignored and both `playwright`/`chrome-devtools` MCPs fell back to
+        // their built-in npx defaults (no LD_LIBRARY_PATH, no executable
+        // override). See xiaodaoyiba-v2 §S-256 for the repro.
+        strictMcpConfig: true,
         ...(args.maxTurns ? { maxTurns: args.maxTurns } : {}),
         systemPrompt: {
           type: 'preset',
