@@ -173,7 +173,7 @@ export interface MetaRefinePromptInput {
 }
 
 export function metaRefinePrompt(i: MetaRefinePromptInput): string {
-  return `You are a staff software engineer called in to **fix claude-autopilot
+  return `You are a staff software engineer called in to **fix agent-autopilot
 itself**, not the downstream target project.
 
 Autopilot is a zero-human-in-the-loop CLI that drives any repo toward its

@@ -33,7 +33,7 @@ export interface RefineResult {
  * Try to auto-locate the autopilot source repo from `import.meta.url`. Works
  * whether autopilot is running from `dist/` (installed / npm-linked) or
  * `src/` (dev). Returns the path if it looks like a writable git checkout of
- * claude-autopilot, otherwise null.
+ * agent-autopilot, otherwise null.
  */
 export function detectAutopilotSource(): string | null {
   try {
@@ -44,7 +44,7 @@ export function detectAutopilotSource(): string | null {
       const pkgPath = join(dir, 'package.json');
       if (existsSync(pkgPath)) {
         const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { name?: string };
-        if (pkg.name === 'claude-autopilot') {
+        if (pkg.name === 'agent-autopilot' || pkg.name === 'claude-autopilot') {
           if (existsSync(join(dir, '.git'))) return dir;
           return null; // installed read-only from registry — can't self-modify
         }
@@ -117,7 +117,7 @@ export async function runMetaRefinement(args: RefineArgs): Promise<RefineResult>
           type: 'preset',
           preset: 'claude_code',
           append:
-            'You are the META-REFINEMENT agent for claude-autopilot itself. ' +
+            'You are the META-REFINEMENT agent for agent-autopilot itself. ' +
             'You are editing the tool, not the downstream project. Never ' +
             'modify the target repo. Commit + push only after tests and build ' +
             'pass.',

@@ -1,4 +1,4 @@
-# claude-autopilot
+# agent-autopilot
 
 > Zero-human-in-the-loop wrapper around Claude Code **or Codex**. Point it at
 > any repo with a `FINAL_GOAL.md`; it runs a judge/worker loop until the goal is
@@ -23,7 +23,7 @@ Every iteration:
 4. **Stagnation detector** — if the outstanding list stays ≥ 90% the same
    and no commits land for N iterations, autopilot halts.
 5. **Self-refinement meta-loop** — on stagnation, a fresh session using the
-   selected runtime is spawned with `cwd=<claude-autopilot source repo>`. It reads the
+   selected runtime is spawned with `cwd=<agent-autopilot source repo>`. It reads the
    stagnation report + recent worker transcripts, edits autopilot's own
    prompts / architecture / source, runs tests + build (must pass),
    commits, pushes, and then autopilot rebuilds and relaunches itself with
@@ -37,8 +37,8 @@ inherited automatically.
 ## Install
 
 ```bash
-git clone https://github.com/shyDaniel/claude-autopilot
-cd claude-autopilot
+git clone https://github.com/shyDaniel/agent-autopilot
+cd agent-autopilot
 npm install
 npm run build
 npm link   # exposes `autopilot` on your PATH
@@ -92,7 +92,7 @@ autopilot run . --no-auto-refine
 autopilot run . --max-refinements 5
 
 # explicit autopilot source path (default: auto-detected from import.meta.url)
-autopilot run . --autopilot-source /path/to/claude-autopilot
+autopilot run . --autopilot-source /path/to/agent-autopilot
 ```
 
 ### Email alerts on big events (optional)

@@ -14,7 +14,7 @@ export async function statusCommand(repoArg: string): Promise<number> {
   const aliveLabel = alive ? kleur.green('alive') : kleur.gray('stopped');
   const phaseColor = colorPhase(s.phase);
 
-  console.log(kleur.bold().cyan('claude-autopilot status'));
+  console.log(kleur.bold().cyan('agent-autopilot status'));
   console.log(`  repo:           ${s.repo}`);
   console.log(`  pid:            ${s.pid} (${aliveLabel})`);
   console.log(`  started:        ${s.startedAt}`);

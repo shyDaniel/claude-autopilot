@@ -36,7 +36,7 @@ program
   .option('--max-subtask-attempts <n>', 'mark a subtask failed after N unsuccessful worker iterations on it', (v) => parseInt(v, 10), 3)
   .option('--no-stagnation', 'disable the stagnation detector')
   .option('--no-auto-refine', 'on stagnation, do NOT spawn a meta-agent to refine autopilot itself')
-  .option('--autopilot-source <path>', 'path to the claude-autopilot source repo (auto-detected if omitted)')
+  .option('--autopilot-source <path>', 'path to the agent-autopilot source repo (auto-detected if omitted)')
   .option('--max-refinements <n>', 'cap how many times autopilot can refine itself per target run', (v) => parseInt(v, 10), 3)
   .option('--no-email', 'disable email alerts even if SMTP env vars are set')
   .option('-v, --verbose', 'stream full text blocks and full tool inputs to stdout (otherwise only first line / name preview)')

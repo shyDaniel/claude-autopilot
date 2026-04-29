@@ -83,7 +83,7 @@ export async function runJudge(args: JudgeArgs): Promise<Verdict> {
           type: 'preset',
           preset: 'claude_code',
           append:
-            'You are the JUDGE in a claude-autopilot loop. Be uncompromising. ' +
+            'You are the JUDGE in an agent-autopilot loop. Be uncompromising. ' +
             'Output a single fenced JSON block at the end — nothing else after it.',
         },
       };

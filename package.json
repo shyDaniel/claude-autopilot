@@ -1,5 +1,5 @@
 {
-  "name": "claude-autopilot",
+  "name": "agent-autopilot",
   "version": "0.8.1",
   "description": "Autonomous wrapper that runs Claude Code or Codex in an infinite loop on any repo until FINAL_GOAL.md is fully satisfied — zero human in the loop.",
   "type": "module",

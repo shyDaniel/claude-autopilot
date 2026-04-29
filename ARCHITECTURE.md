@@ -1,4 +1,4 @@
-# ARCHITECTURE.md — claude-autopilot
+# ARCHITECTURE.md — agent-autopilot
 
 ## Overview
 
@@ -127,7 +127,7 @@ writeStagnationReport()            → .autopilot/STAGNATION_REPORT.md
   ↓
 detectAutopilotSource()            → walks import.meta.url upward to find
                                      a writable git checkout where
-                                     package.json name == "claude-autopilot"
+                                     package.json name == "agent-autopilot"
   ↓
 runMetaRefinement()                → Claude SDK or codex exec with cwd = autopilot source,
                                      prompt points at stagnation report +
@@ -175,7 +175,7 @@ Stagnation fires when, for `--stagnation-threshold` consecutive transitions
 3. Exits with code 3.
 
 The human can then refine `FINAL_GOAL.md`, edit the autopilot prompts, or
-run `autopilot run /path/to/claude-autopilot` to let autopilot drive its own
+run `autopilot run /path/to/agent-autopilot` to let autopilot drive its own
 refinement.
 
 ## Observability surface (all inside target-repo `.autopilot/`)

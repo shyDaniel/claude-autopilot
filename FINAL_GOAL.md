@@ -1,4 +1,4 @@
-# FINAL_GOAL.md — claude-autopilot
+# FINAL_GOAL.md — agent-autopilot
 
 ## Vision
 

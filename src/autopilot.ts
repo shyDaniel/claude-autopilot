@@ -150,7 +150,7 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
     },
   });
 
-  log.banner(`${opts.runtime === 'codex' ? 'codex-autopilot' : 'claude-autopilot'} @ ${repo}`);
+  log.banner(`${opts.runtime === 'codex' ? 'codex-autopilot' : 'agent-autopilot'} @ ${repo}`);
   log.info(
     `agent=${agentDisplayName(opts.runtime)}  pid=${process.pid}  resume=${opts.resume}  maxIter=${opts.maxIterations ?? '∞'}  noPush=${opts.noPush}  dryRun=${opts.dryRun}  stagThreshold=${opts.stagnationThreshold}${opts.stagnationDisabled ? ' (disabled)' : ''}  autoRefine=${opts.autoRefine}`,
   );
@@ -439,7 +439,7 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
         if (opts.autoRefine) {
           const autopilotSource = opts.autopilotSource ?? detectAutopilotSource();
           if (!autopilotSource) {
-            log.err('auto-refine enabled but autopilot source not found (not a git checkout of claude-autopilot); exit 3');
+            log.err('auto-refine enabled but autopilot source not found (not a git checkout of agent-autopilot); exit 3');
             exitCode = 3;
             break;
           }

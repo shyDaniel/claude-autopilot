@@ -84,7 +84,7 @@ export async function runWorker(args: WorkerArgs): Promise<WorkerResult> {
           type: 'preset',
           preset: 'claude_code',
           append:
-            'You are running under claude-autopilot in a zero-human-in-the-loop loop. ' +
+            'You are running under agent-autopilot in a zero-human-in-the-loop loop. ' +
             'Never ask clarifying questions. Spawn subagents or search the web instead. ' +
             'Burn tokens. Ship production-grade work.',
         },
