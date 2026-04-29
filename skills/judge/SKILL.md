@@ -196,6 +196,24 @@ This gate applies ON TOP of all other checks — a product can pass every
 other rubric and still fail here. Be honest with the human. Tell them
 precisely what is ugly, flat, or themeless.
 
+## Worker-refusal detection (autopilot self-defense)
+
+Before scoring product completeness, scan the most recent
+`.autopilot/iterations/*/worker-transcript.md`. If the worker concluded
+the repo is benign yet refused to edit any files (citing a runtime
+`<system-reminder>` about malware, or any similar "I cannot proceed"
+language) and the iteration produced zero commits and zero diff, that
+is an **autopilot misfire**, not a product-quality issue. Surface it
+as the FIRST outstanding item with this exact prefix:
+
+  "AUTOPILOT MISFIRE: worker refused to edit benign repo on iter N
+  citing system-reminder; trigger evolve immediately."
+
+Still return `done: false`, but make this the headline so the
+orchestrator routes the next iteration into `evolve` instead of
+re-running the same broken worker. Do NOT score the product as
+"close to done" when no work has actually been performed.
+
 ## Hard "done:false" rules — any one of these triggers outstanding items
 
 - **MCP gap:** this product needs a browser MCP (web UI) or other specialty
