@@ -16,6 +16,8 @@ import {
   DEFAULT_JUDGE_MODELS,
   DEFAULT_WORKER_MODELS,
   ModelSelector,
+  agentDisplayName,
+  type AgentRuntime,
   type ModelPreference,
 } from './model.js';
 import {
@@ -66,6 +68,7 @@ export interface AutopilotOptions {
   startCmd?: string;
   startOnDoneDisabled: boolean;
   maxSubtaskAttempts: number;
+  runtime: AgentRuntime;
 }
 
 const BASE_BACKOFF_MS = 4_000;
@@ -143,12 +146,13 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
       autoRefine: opts.autoRefine,
       maxRefinements: opts.maxRefinements,
       refinementsSoFar: state.refinementsSoFar,
+      runtime: opts.runtime,
     },
   });
 
-  log.banner(`claude-autopilot @ ${repo}`);
+  log.banner(`${opts.runtime === 'codex' ? 'codex-autopilot' : 'claude-autopilot'} @ ${repo}`);
   log.info(
-    `pid=${process.pid}  resume=${opts.resume}  maxIter=${opts.maxIterations ?? '∞'}  noPush=${opts.noPush}  dryRun=${opts.dryRun}  stagThreshold=${opts.stagnationThreshold}${opts.stagnationDisabled ? ' (disabled)' : ''}  autoRefine=${opts.autoRefine}`,
+    `agent=${agentDisplayName(opts.runtime)}  pid=${process.pid}  resume=${opts.resume}  maxIter=${opts.maxIterations ?? '∞'}  noPush=${opts.noPush}  dryRun=${opts.dryRun}  stagThreshold=${opts.stagnationThreshold}${opts.stagnationDisabled ? ' (disabled)' : ''}  autoRefine=${opts.autoRefine}`,
   );
   log.info(
     `models: worker=${opts.workerModels.primary} (fallback ${opts.workerModels.fallback})  judge=${opts.judgeModels.primary} (fallback ${opts.judgeModels.fallback})`,
@@ -209,6 +213,7 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
         isWebApp,
         stuckBrief: stuckBrief || undefined,
         mcpServers,
+        runtime: opts.runtime,
       });
     } catch (err) {
       consecutiveErrors += 1;
@@ -361,6 +366,7 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
         isWebApp,
         subtaskBrief: nextSubtask ? renderSubtaskBrief(nextSubtask) : undefined,
         mcpServers,
+        runtime: opts.runtime,
       });
       workerTranscript = result.transcript;
       consecutiveErrors = 0;
@@ -454,6 +460,7 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
             maxRefinements: opts.maxRefinements,
             selector: refineSelector,
             events,
+            runtime: opts.runtime,
           });
 
           if (r.success) {

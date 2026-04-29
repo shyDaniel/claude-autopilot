@@ -145,3 +145,15 @@ one-shot threshold, halving floor, growth, reason priority) and
 passing.
 
 **Dependency:** added `nodemailer` + `@types/nodemailer`.
+
+## 2026-04-29 — Codex runtime parity
+
+Added Codex as a first-class autopilot runtime while keeping Claude Code as the
+backwards-compatible default. `autopilot run . --agent codex` and the new
+`codex-autopilot` bin now drive the same judge/worker/self-refinement loop via
+`codex exec`, with GPT-5.5 -> GPT-5.4 sticky fallback and MCP config injected
+through Codex `-c mcp_servers...` overrides.
+
+Updated prompts and docs to describe a selected "agent runtime" rather than a
+Claude-only flow. Added `test/codex.test.ts` to cover Codex MCP TOML override
+rendering.

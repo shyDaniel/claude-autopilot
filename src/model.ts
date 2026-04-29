@@ -3,6 +3,8 @@ export interface ModelPreference {
   fallback: string;
 }
 
+export type AgentRuntime = 'claude' | 'codex';
+
 export const DEFAULT_WORKER_MODELS: ModelPreference = {
   primary: 'claude-opus-4-7',
   fallback: 'claude-sonnet-4-6',
@@ -12,6 +14,33 @@ export const DEFAULT_JUDGE_MODELS: ModelPreference = {
   primary: 'claude-opus-4-7',
   fallback: 'claude-sonnet-4-6',
 };
+
+export const DEFAULT_CODEX_WORKER_MODELS: ModelPreference = {
+  primary: 'gpt-5.5',
+  fallback: 'gpt-5.4',
+};
+
+export const DEFAULT_CODEX_JUDGE_MODELS: ModelPreference = {
+  primary: 'gpt-5.5',
+  fallback: 'gpt-5.4',
+};
+
+export function defaultWorkerModels(runtime: AgentRuntime): ModelPreference {
+  return runtime === 'codex' ? DEFAULT_CODEX_WORKER_MODELS : DEFAULT_WORKER_MODELS;
+}
+
+export function defaultJudgeModels(runtime: AgentRuntime): ModelPreference {
+  return runtime === 'codex' ? DEFAULT_CODEX_JUDGE_MODELS : DEFAULT_JUDGE_MODELS;
+}
+
+export function normalizeAgentRuntime(value: unknown): AgentRuntime {
+  if (value === 'codex' || value === 'claude') return value;
+  throw new Error(`Unsupported agent runtime "${String(value)}"; expected "claude" or "codex"`);
+}
+
+export function agentDisplayName(runtime: AgentRuntime): string {
+  return runtime === 'codex' ? 'Codex' : 'Claude Code';
+}
 
 export type FallbackListener = (from: string, to: string, reason: string) => void | Promise<void>;
 

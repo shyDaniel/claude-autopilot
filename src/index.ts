@@ -1,18 +1,20 @@
 #!/usr/bin/env node
+import { basename } from 'node:path';
 import { Command } from 'commander';
 import { runAutopilot } from './autopilot.js';
-import { DEFAULT_JUDGE_MODELS, DEFAULT_WORKER_MODELS } from './model.js';
+import { defaultJudgeModels, defaultWorkerModels, normalizeAgentRuntime } from './model.js';
 import { statusCommand } from './commands/status.js';
 import { watchCommand } from './commands/watch.js';
 import { logCommand } from './commands/log.js';
 import { log } from './logging.js';
 
 const program = new Command();
+const invokedName = basename(process.argv[1] ?? 'autopilot').includes('codex') ? 'codex-autopilot' : 'autopilot';
 
 program
-  .name('autopilot')
+  .name(invokedName)
   .description(
-    'Zero-human-in-the-loop wrapper around Claude Code. Drives a repo from ' +
+    'Zero-human-in-the-loop wrapper around Claude Code or Codex. Drives a repo from ' +
       'its current state to "done-done" per FINAL_GOAL.md, with live ' +
       'observability, sticky model fallback, and self-refinement on stagnation.',
   )
@@ -22,11 +24,12 @@ program
   .command('run', { isDefault: true })
   .description('start the autopilot loop against a repo')
   .argument('[repo]', 'path to the target repository', '.')
+  .option('--agent <runtime>', 'coding agent runtime: claude or codex (default: claude; codex-autopilot defaults codex)')
   .option('--max-iterations <n>', 'cap total iterations (default: unlimited)', (v) => parseInt(v, 10))
-  .option('--worker-model <id>', `primary worker model (default ${DEFAULT_WORKER_MODELS.primary})`, DEFAULT_WORKER_MODELS.primary)
-  .option('--worker-fallback-model <id>', `worker model used after a rate-limit/overload on primary (default ${DEFAULT_WORKER_MODELS.fallback})`, DEFAULT_WORKER_MODELS.fallback)
-  .option('--judge-model <id>', `primary judge model (default ${DEFAULT_JUDGE_MODELS.primary})`, DEFAULT_JUDGE_MODELS.primary)
-  .option('--judge-fallback-model <id>', `judge fallback model (default ${DEFAULT_JUDGE_MODELS.fallback})`, DEFAULT_JUDGE_MODELS.fallback)
+  .option('--worker-model <id>', 'primary worker model (runtime-specific default)')
+  .option('--worker-fallback-model <id>', 'worker model used after a rate-limit/overload on primary (runtime-specific default)')
+  .option('--judge-model <id>', 'primary judge model (runtime-specific default)')
+  .option('--judge-fallback-model <id>', 'judge fallback model (runtime-specific default)')
   .option('--worker-max-turns <n>', 'cap turns per worker iteration', (v) => parseInt(v, 10))
   .option('--judge-max-turns <n>', 'cap turns per judge iteration', (v) => parseInt(v, 10))
   .option('--stagnation-threshold <n>', 'iterations with no progress before halting', (v) => parseInt(v, 10), 3)
@@ -44,16 +47,21 @@ program
   .option('--resume', 'resume from .autopilot/state.json inside the target repo')
   .action(async (repo: string, opts: Record<string, unknown>) => {
     try {
+      const defaultRuntime = process.env.AUTOPILOT_AGENT ?? (basename(process.argv[1] ?? '').includes('codex') ? 'codex' : 'claude');
+      const runtime = normalizeAgentRuntime((opts.agent as string | undefined) ?? defaultRuntime);
+      const workerDefaults = defaultWorkerModels(runtime);
+      const judgeDefaults = defaultJudgeModels(runtime);
       const code = await runAutopilot({
         repo,
+        runtime,
         maxIterations: opts.maxIterations as number | undefined,
         workerModels: {
-          primary: (opts.workerModel as string) ?? DEFAULT_WORKER_MODELS.primary,
-          fallback: (opts.workerFallbackModel as string) ?? DEFAULT_WORKER_MODELS.fallback,
+          primary: (opts.workerModel as string) ?? workerDefaults.primary,
+          fallback: (opts.workerFallbackModel as string) ?? workerDefaults.fallback,
         },
         judgeModels: {
-          primary: (opts.judgeModel as string) ?? DEFAULT_JUDGE_MODELS.primary,
-          fallback: (opts.judgeFallbackModel as string) ?? DEFAULT_JUDGE_MODELS.fallback,
+          primary: (opts.judgeModel as string) ?? judgeDefaults.primary,
+          fallback: (opts.judgeFallbackModel as string) ?? judgeDefaults.fallback,
         },
         workerMaxTurns: opts.workerMaxTurns as number | undefined,
         judgeMaxTurns: opts.judgeMaxTurns as number | undefined,

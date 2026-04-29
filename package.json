@@ -1,10 +1,11 @@
 {
   "name": "claude-autopilot",
   "version": "0.8.1",
-  "description": "Autonomous wrapper that runs Claude Code in an infinite loop on any repo until FINAL_GOAL.md is fully satisfied — zero human in the loop.",
+  "description": "Autonomous wrapper that runs Claude Code or Codex in an infinite loop on any repo until FINAL_GOAL.md is fully satisfied — zero human in the loop.",
   "type": "module",
   "bin": {
-    "autopilot": "./bin/autopilot.js"
+    "autopilot": "./bin/autopilot.js",
+    "codex-autopilot": "./bin/codex-autopilot.js"
   },
   "main": "./dist/index.js",
   "scripts": {
@@ -42,6 +43,8 @@
   "keywords": [
     "claude",
     "claude-code",
+    "codex",
+    "openai",
     "agent",
     "autopilot",
     "autonomous",

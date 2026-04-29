@@ -3,9 +3,10 @@ import { workerPrompt } from './prompts.js';
 import { log } from './logging.js';
 import type { EventLog } from './events.js';
 import type { StatusWriter } from './status.js';
-import { withModel, type ModelSelector } from './model.js';
+import { agentDisplayName, withModel, type AgentRuntime, type ModelSelector } from './model.js';
 import { printMessage } from './transcript.js';
 import type { McpServerConfig } from './mcp.js';
+import { runCodexExec } from './codex.js';
 
 export interface WorkerArgs {
   repoPath: string;
@@ -22,6 +23,7 @@ export interface WorkerArgs {
   isWebApp: boolean;
   subtaskBrief?: string;
   mcpServers: Record<string, McpServerConfig>;
+  runtime: AgentRuntime;
 }
 
 export interface WorkerResult {
@@ -41,6 +43,7 @@ export async function runWorker(args: WorkerArgs): Promise<WorkerResult> {
     availableMcps: args.availableMcps,
     isWebApp: args.isWebApp,
     subtaskBrief: args.subtaskBrief,
+    agentName: agentDisplayName(args.runtime),
   });
 
   await args.events.emit({ iter: args.iteration, phase: 'worker', kind: 'start' });
@@ -52,6 +55,25 @@ export async function runWorker(args: WorkerArgs): Promise<WorkerResult> {
 
   try {
     await withModel(args.selector, async (model) => {
+      if (args.runtime === 'codex') {
+        const result = await runCodexExec({
+          repoPath: args.repoPath,
+          label: 'worker',
+          iteration: args.iteration,
+          model,
+          prompt,
+          mode: 'worker',
+          verbose: args.verbose,
+          events: args.events,
+          status: args.status,
+          mcpServers: args.mcpServers,
+        });
+        turns += result.completedTurns;
+        finalText = result.finalText;
+        transcript.push(result.transcript);
+        return;
+      }
+
       const options: Options = {
         cwd: args.repoPath,
         permissionMode: 'bypassPermissions',

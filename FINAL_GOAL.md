@@ -2,17 +2,17 @@
 
 ## Vision
 
-A zero-human-in-the-loop wrapper around Claude Code that drives **any** repo from
+A zero-human-in-the-loop wrapper around Claude Code or Codex that drives **any** repo from
 empty-or-partial to *done-done* — production-grade, aesthetically polished,
-internet-shippable to millions of users — by invoking Claude Code in an infinite
+internet-shippable to millions of users — by invoking a coding agent in an infinite
 loop until `FINAL_GOAL.md` of the target repo is fully satisfied.
 
 ## Acceptance Criteria
 
 1. **CLI.** `autopilot <repo>` (or `autopilot .`) starts the loop against any repo.
 2. **Autonomy.** No interactive prompts. Permissions bypassed. Uses every tool,
-   MCP server, subagent, and web resource Claude Code has configured.
-3. **Looping.** Each iteration: judge state → have Claude make one concrete unit
+   MCP server, subagent, and web resource the selected runtime has configured.
+3. **Looping.** Each iteration: judge state → have the selected agent make one concrete unit
    of progress → commit → push → re-judge.
 4. **Completion detection.** A dedicated judge invocation (separate from the
    worker) returns structured JSON; the loop terminates only when the judge
@@ -26,16 +26,18 @@ loop until `FINAL_GOAL.md` of the target repo is fully satisfied.
    conflicts) by retrying with backoff instead of exiting.
 8. **Observable.** Pretty, color-coded console output with iteration counter,
    elapsed time, token usage (if available), and per-step status.
-9. **Configurable.** Flags for `--max-iterations`, `--judge-model`,
+9. **Configurable.** Flags for `--agent`, `--max-iterations`, `--judge-model`,
    `--worker-model`, `--no-push`, `--dry-run`, `--resume`.
 10. **Published.** Repo initialized, documented, committed, and pushed to a
     remote (GitHub) with a clear README.
 
 ## Enrichments Added
 
-- **Judge/worker split.** Two Claude invocations per iteration: one that *does*
-  work, one that *judges* whether to stop. Separation prevents the worker from
-  prematurely declaring victory.
+- **Judge/worker split.** Two runtime invocations per iteration: one that
+  *does* work, one that *judges* whether to stop. Separation prevents the
+  worker from prematurely declaring victory.
+- **Codex parity.** `--agent codex` and `codex-autopilot` run the same loop
+  through `codex exec` with GPT-5.5/GPT-5.4 defaults.
 - **Heartbeat WORKLOG entries** let a human catch up at any point by reading
   the repo alone.
 - **Crash resilience** via `--resume`: iteration state persisted to

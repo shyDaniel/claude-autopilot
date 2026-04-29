@@ -7,7 +7,8 @@ import { query, type SDKMessage, type Options } from '@anthropic-ai/claude-agent
 import { metaRefinePrompt } from '../prompts.js';
 import { log } from '../logging.js';
 import type { EventLog } from '../events.js';
-import { withModel, type ModelSelector } from '../model.js';
+import { withModel, type AgentRuntime, type ModelSelector } from '../model.js';
+import { runCodexExec } from '../codex.js';
 
 export interface RefineArgs {
   autopilotSource: string;
@@ -17,6 +18,7 @@ export interface RefineArgs {
   maxRefinements: number;
   selector: ModelSelector;
   events: EventLog;
+  runtime: AgentRuntime;
 }
 
 export interface RefineResult {
@@ -92,6 +94,21 @@ export async function runMetaRefinement(args: RefineArgs): Promise<RefineResult>
   const transcript: string[] = [];
   try {
     await withModel(args.selector, async (model) => {
+      if (args.runtime === 'codex') {
+        const result = await runCodexExec({
+          repoPath: autopilotSource,
+          label: 'refine',
+          iteration: 0,
+          model,
+          prompt,
+          mode: 'worker',
+          verbose: false,
+          events: args.events,
+        });
+        transcript.push(result.transcript);
+        return;
+      }
+
       const options: Options = {
         cwd: autopilotSource,
         permissionMode: 'bypassPermissions',

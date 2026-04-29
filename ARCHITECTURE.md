@@ -12,14 +12,14 @@ separate shell.
 │  autopilot run <repo>                                                  │
 │                                                                        │
 │   ┌──────────────┐   judge       ┌───────────────────┐                 │
-│   │ CLI (commander)├───────────► │  Judge Claude     │                 │
+│   │ CLI (commander)├───────────► │ Judge runtime     │                 │
 │   └──────┬───────┘               │  (JSON verdict)   │                 │
 │          │                       └─────────┬─────────┘                 │
 │          │ done?──no──┐                    │                           │
 │          │            ▼                    │                           │
 │          │   ┌──────────────────┐          │                           │
-│          │   │  Worker Claude   │          │                           │
-│          │   │  bypassPerms,    │          │                           │
+│          │   │ Worker runtime   │          │                           │
+│          │   │ full permissions,│          │                           │
 │          │   │  all tools/MCPs  │          │                           │
 │          │   └─────────┬────────┘          │                           │
 │          │             │ commit+push       │                           │
@@ -53,8 +53,9 @@ separate shell.
 | ----------------------------------------- | -------------------------------------------------------------------------- |
 | [src/index.ts](src/index.ts)              | CLI dispatch — `run` / `status` / `watch` / `log` subcommands.             |
 | [src/autopilot.ts](src/autopilot.ts)      | The infinite judge→worker loop; orchestrates state, events, artifacts.     |
-| [src/judge.ts](src/judge.ts)              | Spawns a read-only Claude session, parses the fenced JSON verdict.         |
-| [src/worker.ts](src/worker.ts)            | Spawns a full-permission Claude session; streams events; returns transcript.|
+| [src/judge.ts](src/judge.ts)              | Spawns a Claude or Codex judge session, parses the fenced JSON verdict.    |
+| [src/worker.ts](src/worker.ts)            | Spawns a full-permission Claude or Codex worker; returns transcript.       |
+| [src/codex.ts](src/codex.ts)              | Codex CLI runner for `codex exec`, config overrides, transcripts.          |
 | [src/prompts.ts](src/prompts.ts)          | Worker & judge prompt templates.                                           |
 | [src/events.ts](src/events.ts)            | Append-only JSONL event log.                                               |
 | [src/status.ts](src/status.ts)            | Live snapshot of current phase / action.                                   |
@@ -65,14 +66,29 @@ separate shell.
 | [src/commands/status.ts](src/commands/status.ts) | `autopilot status` implementation.                                  |
 | [src/commands/watch.ts](src/commands/watch.ts)   | `autopilot watch` — polling tail with pretty formatting.            |
 | [src/commands/log.ts](src/commands/log.ts)       | `autopilot log` — iteration-level history table.                    |
-| [src/commands/refine.ts](src/commands/refine.ts) | Meta-refinement: spawn Claude on autopilot source, verify, relaunch.|
-| [src/model.ts](src/model.ts)                     | `ModelSelector` + `withModel`: sticky Opus→Sonnet fallback.         |
+| [src/commands/refine.ts](src/commands/refine.ts) | Meta-refinement: spawn selected runtime on autopilot source.       |
+| [src/model.ts](src/model.ts)                     | Runtime defaults + `ModelSelector` sticky fallback.                 |
+
+## Runtime selection
+
+The CLI defaults to Claude Code for backwards compatibility. `--agent codex`
+switches judge, worker, and meta-refinement to Codex. The `codex-autopilot`
+binary sets the same default through `AUTOPILOT_AGENT=codex`.
+
+Claude sessions use `@anthropic-ai/claude-agent-sdk` with
+`permissionMode: 'bypassPermissions'`. Codex sessions use `codex exec`:
+
+- judge: `--sandbox workspace-write --ask-for-approval never`
+- worker/refine: `--dangerously-bypass-approvals-and-sandbox`
+- MCPs: built-in and detected MCP servers are injected as `-c mcp_servers...`
+  overrides so Codex sees the same baseline validation stack.
 
 ## Model selection & sticky fallback
 
 Worker and judge each get their own [`ModelSelector`](src/model.ts) with a
 `{primary, fallback}` pair. Default: `{primary: claude-opus-4-7, fallback:
-claude-sonnet-4-6}` for both. The SDK's `query()` is wrapped in
+claude-sonnet-4-6}` for Claude and `{primary: gpt-5.5, fallback: gpt-5.4}`
+for Codex. The SDK/CLI call is wrapped in
 [`withModel`](src/model.ts):
 
 ```
@@ -92,7 +108,7 @@ Quota classification matches `rate_limit`, `overloaded`, `insufficient_quota`,
 insensitive). One successful downgrade sticks for the rest of the process —
 no flapping, no re-probes — on the assumption that these conditions take
 minutes-to-hours to clear and making progress matters more than staying on
-Opus.
+the primary model.
 
 The meta-refinement agent uses a **fresh** selector so a sticky worker
 downgrade doesn't automatically force the meta-agent onto a weaker model.
@@ -100,8 +116,8 @@ downgrade doesn't automatically force the meta-agent onto a weaker model.
 ## Self-refinement on stagnation
 
 When the stagnation detector fires, autopilot writes `STAGNATION_REPORT.md`
-and — if `--auto-refine` (default on) — spawns a third kind of Claude
-session: the **meta-refinement agent** at
+and — if `--auto-refine` (default on) — spawns a third session using the
+selected runtime: the **meta-refinement agent** at
 [src/commands/refine.ts](src/commands/refine.ts).
 
 ```
@@ -113,7 +129,7 @@ detectAutopilotSource()            → walks import.meta.url upward to find
                                      a writable git checkout where
                                      package.json name == "claude-autopilot"
   ↓
-runMetaRefinement()                → query() with cwd = autopilot source,
+runMetaRefinement()                → Claude SDK or codex exec with cwd = autopilot source,
                                      prompt points at stagnation report +
                                      recent iteration artifacts in target
   ↓

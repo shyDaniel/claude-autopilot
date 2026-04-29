@@ -3,9 +3,10 @@ import { judgePrompt } from './prompts.js';
 import { log } from './logging.js';
 import type { EventLog } from './events.js';
 import type { StatusWriter } from './status.js';
-import { withModel, type ModelSelector } from './model.js';
+import { agentDisplayName, withModel, type AgentRuntime, type ModelSelector } from './model.js';
 import { printMessage } from './transcript.js';
 import type { McpServerConfig } from './mcp.js';
+import { runCodexExec } from './codex.js';
 
 export interface StructuredSubtask {
   title?: string;
@@ -37,6 +38,7 @@ export interface JudgeArgs {
   isWebApp: boolean;
   stuckBrief?: string;
   mcpServers: Record<string, McpServerConfig>;
+  runtime: AgentRuntime;
 }
 
 export async function runJudge(args: JudgeArgs): Promise<Verdict> {
@@ -45,6 +47,7 @@ export async function runJudge(args: JudgeArgs): Promise<Verdict> {
     availableMcps: args.availableMcps,
     isWebApp: args.isWebApp,
     stuckBrief: args.stuckBrief,
+    agentName: agentDisplayName(args.runtime),
   });
 
   await args.events.emit({ iter: args.iteration, phase: 'judge', kind: 'start' });
@@ -52,6 +55,23 @@ export async function runJudge(args: JudgeArgs): Promise<Verdict> {
   const transcript: string[] = [];
   try {
     await withModel(args.selector, async (model) => {
+      if (args.runtime === 'codex') {
+        const result = await runCodexExec({
+          repoPath: args.repoPath,
+          label: 'judge',
+          iteration: args.iteration,
+          model,
+          prompt,
+          mode: 'judge',
+          verbose: args.verbose,
+          events: args.events,
+          status: args.status,
+          mcpServers: args.mcpServers,
+        });
+        transcript.push(result.transcript);
+        return;
+      }
+
       const options: Options = {
         cwd: args.repoPath,
         permissionMode: 'bypassPermissions',

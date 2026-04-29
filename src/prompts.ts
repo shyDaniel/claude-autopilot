@@ -45,6 +45,7 @@ export interface WorkerPromptInput {
   isWebApp: boolean;
   /** Self-contained brief for the one subtask this iteration should tackle. */
   subtaskBrief?: string;
+  agentName?: string;
 }
 
 export function workerPrompt(i: WorkerPromptInput): string {
@@ -56,9 +57,9 @@ export function workerPrompt(i: WorkerPromptInput): string {
 
     ${i.repoPath}
 
-You have UNLIMITED time, UNLIMITED tokens, and every tool that Claude Code offers
-— Read, Write, Edit, Bash, Grep, Glob, WebSearch, WebFetch, every configured MCP
-server, and the Agent tool for spawning subagents.
+You have UNLIMITED time, UNLIMITED tokens, and every tool that ${i.agentName ?? 'Claude Code'} offers
+— file reads/edits, shell commands, fast search, web lookup, every configured MCP
+server, and subagents when the runtime supports them.
 
 ## Available MCPs (auto-detected for this session)
 
@@ -66,7 +67,7 @@ ${i.availableMcps}
 ${MCP_PLAYBOOK}
 
 This is iteration ${i.iteration} of an autonomous loop. Previous iterations have
-already run. A separate "judge" Claude has just evaluated the repo and reports:
+already run. A separate judge agent has just evaluated the repo and reports:
 
 === OUTSTANDING WORK ===
 ${i.outstandingSummary}
@@ -88,8 +89,8 @@ ${i.subtaskBrief ?? '## THIS ITERATION\'S SUBTASK\n\n(No structured brief was as
 3. Complete it fully this iteration: design → implement → test → verify → polish.
 4. If you're unsure about anything — a library choice, an API behavior, a design
    decision, a best practice — DO NOT STOP TO ASK. Instead:
-     - Use WebSearch/WebFetch to look up current, authoritative answers.
-     - Spawn an Agent (subagent_type: general-purpose, Explore, or Plan) to
+     - Use web search / fetch tools to look up current, authoritative answers.
+     - Spawn a subagent (explorer, reviewer, planner, or default worker) to
        investigate and return a recommendation.
      - Pick the best option with your judgment and proceed.
 5. **Test your change like a real user, not like a test-runner.**
@@ -245,6 +246,7 @@ export interface JudgePromptInput {
   isWebApp: boolean;
   /** Pre-rendered block describing subtasks that hit attempt ceiling. */
   stuckBrief?: string;
+  agentName?: string;
 }
 
 export function judgePrompt(input: JudgePromptInput | string): string {
@@ -259,7 +261,7 @@ product manager doing a final shipping review of the repository at:
 
     ${i.repoPath}
 
-You have full tool access. Your job is ONLY to judge — do NOT modify any files.
+You have full ${i.agentName ?? 'Claude Code'} tool access. Your job is ONLY to judge — do NOT modify any files.
 You ARE allowed (and encouraged) to run code, run tests, and drive the product
 via MCPs / Playwright / curl / CLI invocation — whatever it takes to actually
 use the product like a real user would.
@@ -412,7 +414,7 @@ precisely what is ugly, flat, or themeless.
 
 - **MCP gap:** this product needs a browser MCP (web UI) or other specialty
   MCP (multi-user → browserbase, perf → chrome-devtools, etc.) but it isn't
-  configured in \`.mcp.json\` or the global Claude Code config. List the
+  configured in \`.mcp.json\` or the active agent config. List the
   specific MCP as outstanding #1 with an exact install snippet — the
   autopilot cannot validate properly without it, and shipping anyway is
   negligence.

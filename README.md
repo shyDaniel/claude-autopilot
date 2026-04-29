@@ -1,28 +1,29 @@
 # claude-autopilot
 
-> Zero-human-in-the-loop wrapper around Claude Code. Point it at any repo with
-> a `FINAL_GOAL.md`; it runs Claude Code in an infinite loop until the goal is
-> genuinely shipped — with live observability, sticky model fallback
-> (Opus 4.7 → Sonnet 4.6 on rate-limit/overload), and self-refinement on
-> stagnation so autopilot improves its own prompts/architecture as it works.
+> Zero-human-in-the-loop wrapper around Claude Code **or Codex**. Point it at
+> any repo with a `FINAL_GOAL.md`; it runs a judge/worker loop until the goal is
+> genuinely shipped — with live observability, sticky model fallback, and
+> self-refinement on stagnation so autopilot improves its own prompts and
+> architecture as it works.
 
 ## What it does
 
 Every iteration:
 
-1. **Judge** — a read-only Claude session that reads `FINAL_GOAL.md`, walks the
-   repo, runs tests, and returns a structured JSON verdict `{done, summary,
-   outstanding}`.
-2. **Worker** — if not done, a full-permission Claude session
-   (`permissionMode: 'bypassPermissions'`) picks one concrete chunk of
-   outstanding work, implements it end-to-end, tests it, commits, and pushes.
-3. **Sticky model fallback** — both sessions default to **Opus 4.7**. On a
-   rate-limit / overload / quota error, autopilot transparently downgrades
-   for the rest of the run to **Sonnet 4.6** (configurable) and keeps going.
+1. **Judge** — a read-mostly Claude or Codex session reads `FINAL_GOAL.md`,
+   walks the repo, runs tests, and returns a structured JSON verdict
+   `{done, summary, outstanding}`.
+2. **Worker** — if not done, a full-permission Claude or Codex session picks
+   one concrete chunk of outstanding work, implements it end-to-end, tests it,
+   commits, and pushes.
+3. **Sticky model fallback** — Claude defaults to
+   **Opus 4.7 → Sonnet 4.6**. Codex defaults to **GPT-5.5 → GPT-5.4**. On a
+   rate-limit / overload / quota error, autopilot transparently downgrades for
+   the rest of the run and keeps going.
 4. **Stagnation detector** — if the outstanding list stays ≥ 90% the same
    and no commits land for N iterations, autopilot halts.
-5. **Self-refinement meta-loop** — on stagnation, a fresh Claude session is
-   spawned with `cwd=<claude-autopilot source repo>`. It reads the
+5. **Self-refinement meta-loop** — on stagnation, a fresh session using the
+   selected runtime is spawned with `cwd=<claude-autopilot source repo>`. It reads the
    stagnation report + recent worker transcripts, edits autopilot's own
    prompts / architecture / source, runs tests + build (must pass),
    commits, pushes, and then autopilot rebuilds and relaunches itself with
@@ -46,7 +47,8 @@ npm link   # exposes `autopilot` on your PATH
 Requires:
 
 - Node.js ≥ 20
-- `ANTHROPIC_API_KEY` (or an already-authenticated Claude Code login)
+- Claude mode: `ANTHROPIC_API_KEY` or an already-authenticated Claude Code login
+- Codex mode: Codex CLI authenticated via `codex login`
 - `git` and (optionally) `gh` for remote pushes
 
 ## Usage
@@ -54,6 +56,12 @@ Requires:
 ```bash
 # drive the current directory until judge says done
 autopilot run .
+
+# drive with Codex instead of Claude Code
+autopilot run . --agent codex
+
+# same thing through the Codex-default bin
+codex-autopilot run .
 
 # drive a specific repo
 autopilot ~/projects/my-saas
@@ -71,6 +79,11 @@ autopilot run . --resume
 autopilot run . \
   --worker-model claude-opus-4-7 --worker-fallback-model claude-sonnet-4-6 \
   --judge-model claude-opus-4-7  --judge-fallback-model claude-sonnet-4-6
+
+# pick specific Codex models + fallbacks
+codex-autopilot run . \
+  --worker-model gpt-5.5 --worker-fallback-model gpt-5.4 \
+  --judge-model gpt-5.5  --judge-fallback-model gpt-5.4
 
 # disable the self-refinement meta-loop (default: on)
 autopilot run . --no-auto-refine
@@ -164,8 +177,8 @@ the recent history so you have a starting point.
 ### Self-refinement (on by default)
 
 When stagnation fires, autopilot doesn't just exit — it spawns a fresh Claude
-Code session in the autopilot source repo with the stagnation report and the
-recent worker transcripts as context. That session's mandate: diagnose why
+Code or Codex session in the autopilot source repo with the stagnation report
+and the recent worker transcripts as context. That session's mandate: diagnose why
 autopilot got stuck and edit autopilot's own source (typically
 `src/prompts.ts` or `src/metrics.ts`) to fix it. It must make tests + build
 pass before committing, then pushes.
@@ -205,11 +218,12 @@ Inside `<target-repo>/.autopilot/iterations/NNNNNN/`:
 
 ## Safety
 
-`autopilot run` executes Claude Code with `permissionMode: 'bypassPermissions'`.
-It edits files, runs arbitrary shell commands, installs packages, and pushes to
-`origin` without asking. **This is the whole point of the tool.** Do not run it
-against a repo you are not willing to see modified autonomously. Run inside a
-sandbox, container, or throwaway worktree if unsure.
+`autopilot run` executes Claude Code with `permissionMode: 'bypassPermissions'`
+or Codex with `codex exec --dangerously-bypass-approvals-and-sandbox`. It edits
+files, runs arbitrary shell commands, installs packages, and pushes to `origin`
+without asking. **This is the whole point of the tool.** Do not run it against a
+repo you are not willing to see modified autonomously. Run inside a sandbox,
+container, or throwaway worktree if unsure.
 
 `autopilot status` / `watch` / `log` are read-only and safe to run any time.
 
