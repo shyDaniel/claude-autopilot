@@ -109,8 +109,16 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
   });
   await status.update({});
 
-  const availableMcps = detectAvailableMcps(repo);
+  // Print the product banner FIRST so it's the visible top-of-output.
+  // Anything that touches MCP detection or notifier config can fire stderr
+  // warnings (browserbase env missing, SMTP env missing, etc.) — those must
+  // appear UNDER the banner, not above it. Previously: detect → log MCP +
+  // email → events.emit start → banner, which left up to 3 lines of noise
+  // above the product header.
+  log.banner(`${opts.runtime === 'codex' ? 'codex-autopilot' : 'agent-autopilot'} @ ${repo}`);
+
   const isWebApp = looksLikeWebApp(repo);
+  const availableMcps = detectAvailableMcps(repo);
   const mcpSection = renderMcpSection(availableMcps, isWebApp);
   const mcpServers = resolveMcpServers(repo);
   log.info(
@@ -174,7 +182,6 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
     },
   });
 
-  log.banner(`${opts.runtime === 'codex' ? 'codex-autopilot' : 'agent-autopilot'} @ ${repo}`);
   log.info(
     `agent=${agentDisplayName(opts.runtime)}  pid=${process.pid}  resume=${opts.resume}  maxIter=${opts.maxIterations ?? '∞'}  noPush=${opts.noPush}  dryRun=${opts.dryRun}  stagThreshold=${opts.stagnationThreshold}${opts.stagnationDisabled ? ' (disabled)' : ''}  autoRefine=${opts.autoRefine}`,
   );

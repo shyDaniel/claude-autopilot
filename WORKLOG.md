@@ -1,5 +1,53 @@
 # WORKLOG
 
+## 2026-04-29 — lazy-load built-in MCPs so metadata commands stay silent (S-017)
+
+Judge & eval reported that `autopilot --version` printed two lines (the
+`browserbase MCP disabled — set BROWSERBASE_API_KEY and
+BROWSERBASE_PROJECT_ID …` warning followed by `0.9.0`), `autopilot
+--help` led with the same warning instead of `Usage:`, and even `status`
+/ `watch` / `log` leaked the notice. On `autopilot run`, the warning
+plus the two `MCPs injected …` / `email alerts: off` lines printed
+ABOVE the `━━━ agent-autopilot @ <path> ━━━` banner — three lines of
+pre-banner noise.
+
+Root cause: [src/mcp.ts:97](src/mcp.ts) computed
+`export const BUILT_IN_MCPS = buildBuiltInMcps()` at module top-level.
+Every CLI entry point (including pure metadata commands) imports
+`src/index.ts` → `src/autopilot.ts` → `src/mcp.ts` transitively, so the
+one-shot `console.warn` fired at module load before commander even
+parsed argv.
+
+Fix:
+- Replaced the eager top-level `BUILT_IN_MCPS` const with a lazy memoized
+  `getBuiltInMcps()` accessor in [src/mcp.ts](src/mcp.ts). Nothing
+  outside the module imported the old const, so the export is gone
+  rather than stubbed (no backwards-compat shim per skill rules).
+  `_resetBrowserbaseWarnedForTests()` now also clears the lazy cache.
+- Reordered the run prelude in
+  [src/autopilot.ts:112-132](src/autopilot.ts) so `log.banner(…)` fires
+  FIRST, then MCP detection / `MCPs injected …` / `email alerts …` /
+  agent / models log lines flow underneath. The duplicate `log.banner`
+  near the loop start was removed.
+
+Regression coverage: [test/mcp.test.ts:333-408](test/mcp.test.ts) adds a
+`CLI metadata commands stay silent on MCP config (S-017 regression)`
+suite that spawns the actual `bin/autopilot.js` against `dist/` with
+`BROWSERBASE_API_KEY` / `BROWSERBASE_PROJECT_ID` scrubbed and asserts:
+(a) `--version` combined stdio === `0.9.0\n`; (b) `--help` line 1
+matches `^Usage: `; (c) `status <tmp>` emits no `browserbase MCP
+disabled` and no `MCPs injected`; (d) `log <tmp>` same; (e) `run
+--help` same. All five pass; total suite is now 154/154 (was 149).
+
+Manual acceptance: with browserbase env unset, `node bin/autopilot.js
+--version` prints exactly `0.9.0\n`; `--help` line 1 is `Usage:
+autopilot [options] [command]`; `status /tmp/eval-shipping-target` is
+silent on MCP config; `run /tmp/eval-shipping-target --dry-run
+--no-email --max-iterations 1` first line is now the `━━━
+agent-autopilot @ /tmp/eval-shipping-target ━━━…` banner with the
+browserbase warning and MCP/email notices visually beneath it; the
+warning still fires exactly once per run.
+
 ## 2026-04-29 — silence raw `fatal: ambiguous argument 'HEAD'` git-stderr leak on empty repos (S-014)
 
 Eval observed 4 raw `fatal: ambiguous argument 'HEAD'` lines leaking to the

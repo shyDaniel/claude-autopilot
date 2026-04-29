@@ -90,15 +90,22 @@ export function buildBuiltInMcps(env: NodeJS.ProcessEnv = process.env): Record<s
 }
 
 /**
- * Backwards-compatible static view of the built-ins, computed once at module
- * load. Prefer `buildBuiltInMcps()` when you need to react to env changes
- * (e.g. tests). Reads BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID from env.
+ * Lazy view of the built-ins. Computed on first access, NOT at module load,
+ * so importing this module (e.g. transitively from a CLI metadata command
+ * like `--version` or `--help`) does not fire the browserbase-disabled
+ * warning. Prefer `buildBuiltInMcps()` directly when you need to react to
+ * env changes (e.g. tests).
  */
-export const BUILT_IN_MCPS: Record<string, McpServerConfig> = buildBuiltInMcps();
+let _builtInMcpsCache: Record<string, McpServerConfig> | null = null;
+export function getBuiltInMcps(): Record<string, McpServerConfig> {
+  if (_builtInMcpsCache === null) _builtInMcpsCache = buildBuiltInMcps();
+  return _builtInMcpsCache;
+}
 
-/** Test-only: reset the one-shot warn latch so unit tests can re-trigger it. */
+/** Test-only: reset the one-shot warn latch + lazy cache so unit tests can re-trigger them. */
 export function _resetBrowserbaseWarnedForTests(): void {
   browserbaseDisabledWarned = false;
+  _builtInMcpsCache = null;
 }
 
 function readJson<T>(path: string): T | null {

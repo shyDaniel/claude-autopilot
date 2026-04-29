@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import {
   _resetBrowserbaseWarnedForTests,
   buildBuiltInMcps,
@@ -326,5 +328,82 @@ describe('renderMcpSection', () => {
     expect(s).toContain('`playwright`');
     expect(s).toContain('playwright, from built-in');
     expect(s).toContain('github, from global');
+  });
+});
+
+/**
+ * S-017 regression: pure CLI metadata commands (--version, --help, status,
+ * watch, log) used to print the `browserbase MCP disabled — set …` warning
+ * because src/mcp.ts evaluated `BUILT_IN_MCPS = buildBuiltInMcps()` at
+ * module top level, firing the one-shot console.warn for every entry point
+ * that transitively imported mcp.ts (which is all of them — index.ts
+ * imports autopilot.ts → mcp.ts). Making the built-ins lazy moved the
+ * warn to first use, which only happens inside the `run` flow.
+ *
+ * These tests spawn the actual CLI binary with browserbase env scrubbed
+ * so the warn would fire if the regression returned, and assert the exact
+ * combined-stdio output of metadata commands.
+ */
+describe('CLI metadata commands stay silent on MCP config (S-017 regression)', () => {
+  const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+  const cliPath = resolve(repoRoot, 'bin', 'autopilot.js');
+
+  function runCli(args: string[]): { stdout: string; stderr: string; combined: string; status: number | null } {
+    const env = { ...process.env };
+    delete env.BROWSERBASE_API_KEY;
+    delete env.BROWSERBASE_PROJECT_ID;
+    const r = spawnSync(process.execPath, [cliPath, ...args], {
+      cwd: repoRoot,
+      env,
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    return {
+      stdout: r.stdout ?? '',
+      stderr: r.stderr ?? '',
+      combined: (r.stdout ?? '') + (r.stderr ?? ''),
+      status: r.status,
+    };
+  }
+
+  it('--version prints exactly "0.9.0\\n" on combined stdio (no browserbase warning)', () => {
+    const r = runCli(['--version']);
+    expect(r.combined).toBe('0.9.0\n');
+    expect(r.combined).not.toMatch(/browserbase/i);
+  });
+
+  it('--help line 1 is "Usage: ..." (not the browserbase warning)', () => {
+    const r = runCli(['--help']);
+    const firstLine = r.combined.split('\n')[0] ?? '';
+    expect(firstLine).toMatch(/^Usage: /);
+    expect(r.combined).not.toMatch(/browserbase MCP disabled/);
+  });
+
+  it('status against a non-autopilot path is silent on MCP config', async () => {
+    const tmpRepo = await mkdtemp(join(tmpdir(), 'autopilot-cli-status-'));
+    try {
+      const r = runCli(['status', tmpRepo]);
+      expect(r.combined).not.toMatch(/browserbase MCP disabled/);
+      expect(r.combined).not.toMatch(/MCPs injected/);
+    } finally {
+      await rm(tmpRepo, { recursive: true, force: true });
+    }
+  });
+
+  it('log against a non-autopilot path is silent on MCP config', async () => {
+    const tmpRepo = await mkdtemp(join(tmpdir(), 'autopilot-cli-log-'));
+    try {
+      const r = runCli(['log', tmpRepo]);
+      expect(r.combined).not.toMatch(/browserbase MCP disabled/);
+      expect(r.combined).not.toMatch(/MCPs injected/);
+    } finally {
+      await rm(tmpRepo, { recursive: true, force: true });
+    }
+  });
+
+  it('run --help is silent on MCP config', () => {
+    const r = runCli(['run', '--help']);
+    expect(r.combined).not.toMatch(/browserbase MCP disabled/);
+    expect(r.combined).not.toMatch(/MCPs injected/);
   });
 });
