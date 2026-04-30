@@ -8,6 +8,7 @@ import { statusCommand } from './commands/status.js';
 import { watchCommand } from './commands/watch.js';
 import { logCommand } from './commands/log.js';
 import { reportCommand } from './commands/report.js';
+import { diagnoseCommand } from './commands/diagnose.js';
 import { log } from './logging.js';
 import { readPackageVersion } from './version.js';
 
@@ -167,6 +168,16 @@ program
   .option('--live', 'redraw the graph as new events stream in (Ctrl-C to exit)')
   .action(async (repo: string, opts: { json?: boolean; markdown?: boolean; live?: boolean }) => {
     process.exit(await reportCommand(repo, opts));
+  });
+
+program
+  .command('diagnose')
+  .description('inspect a run for anomalies (judge parse failures, evolve storms, hung processes, no-op iterations)')
+  .argument('[repo]', 'path to the target repository', '.')
+  .option('--json', 'emit raw structured JSON for scripts / dashboards')
+  .option('--watch', 'redraw on every events.jsonl change (Ctrl-C to exit)')
+  .action(async (repo: string, opts: { json?: boolean; watch?: boolean }) => {
+    process.exit(await diagnoseCommand(repo, opts));
   });
 
 program.parseAsync(process.argv).catch((err: unknown) => {

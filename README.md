@@ -185,10 +185,36 @@ autopilot log <repo>
 
 # replay the full history of a long run
 autopilot watch <repo> --since 1
+
+# structured graph of the most recent run (terminal / --markdown / --json)
+autopilot report <repo>
+autopilot report <repo> --live          # redraws on every events.jsonl write
+
+# triage: health verdict + anomaly flags + recommendations
+autopilot diagnose <repo>
+autopilot diagnose <repo> --watch       # dashboard for long-running runs
+autopilot diagnose <repo> --json        # for scripts / CI gates
 ```
 
 The surveillance commands read from files under `<repo>/.autopilot/`, so they
 work whether the main loop is still running, crashed, or finished.
+
+`autopilot diagnose` runs a fixed ruleset over the events stream + state +
+status files and surfaces:
+
+| Rule | Severity | Catches |
+|---|---|---|
+| `stale_process` | critical | pid alive but no events for > 5 min |
+| `judge_unparseable_rate` | warn | judge returned no parseable verdict in > 15% of last 10 iters |
+| `iter_time_outlier` | info | iteration ran > 3× median (and > 30 min absolute) |
+| `sdk_error_cluster` | warn | ≥ 3 `Claude Code process exited with code 1` in last hour |
+| `evolve_storm` | warn | 3+ refinements within 30 min — structural fix may be warranted |
+| `worker_noop_pattern` | warn | worker ran but landed 0 commits in ≥ 2 of last 5 iters |
+| `stagnation_with_progress` | warn | outstanding count stable for 4 iters even though commits land |
+| `relaunch_storm` | info | autopilot has re-execed ≥ 5 times this run |
+
+The matching `skills/diagnose/SKILL.md` lets an LLM agent (invoked via "is this
+run stuck?" or similar) layer narrative on top of the deterministic flags.
 
 ## How "done" is decided
 

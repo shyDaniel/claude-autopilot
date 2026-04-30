@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 import kleur from 'kleur';
 import { log } from '../logging.js';
 
-interface RawEvent {
+export interface RawEvent {
   ts: string;
   iter: number;
   phase: 'loop' | 'judge' | 'worker' | 'eval' | 'orchestrate';
@@ -12,7 +12,7 @@ interface RawEvent {
   data?: Record<string, unknown>;
 }
 
-interface IterationSummary {
+export interface IterationSummary {
   iter: number;
   startedAt?: string;
   endedAt?: string;
@@ -33,7 +33,7 @@ interface IterationSummary {
   endMsg?: string;
 }
 
-interface RefinementSummary {
+export interface RefinementSummary {
   number: number;
   iter: number;
   ts: string;
@@ -43,14 +43,14 @@ interface RefinementSummary {
   triggerReason?: string;
 }
 
-interface ProcessStart {
+export interface ProcessStart {
   ts: string;
   pid: string | number;
   resume: boolean;
   refinementsSoFar: number;
 }
 
-interface RunSummary {
+export interface RunSummary {
   repo: string;
   startedAt: string;
   endedAt?: string;
@@ -112,7 +112,7 @@ export async function reportCommand(repo: string, opts: ReportOptions): Promise<
   return 0;
 }
 
-function readEvents(path: string): RawEvent[] {
+export function readEvents(path: string): RawEvent[] {
   const raw = readFileSync(path, 'utf8');
   const out: RawEvent[] = [];
   for (const line of raw.split('\n')) {
