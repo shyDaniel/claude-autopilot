@@ -323,7 +323,9 @@ function renderTerminal(s: RunSummary): string {
   lines.push(`  iterations:   ${lastIter}`);
   lines.push(`  state:        ${stateStr}`);
   lines.push(`  commits:      ${s.totalCommits} to target`);
-  lines.push(`  refinements:  ${s.refinementsUsed} of ${s.evolveBudget} budget used (autopilot self-evolved)`);
+  lines.push(
+    `  refinements:  ${s.refinementsUsed}${Number.isFinite(s.evolveBudget) && s.evolveBudget > 0 ? ` / ${s.evolveBudget} budget` : ' (uncapped)'} (autopilot self-evolved)`,
+  );
   lines.push(`  eval overrules: ${s.evalOverrules}  (judge said done; eval said no)`);
   lines.push(`  models:       worker=${s.workerModel}  judge=${s.judgeModel}`);
   lines.push(`  process starts (each = relaunch): ${s.processStarts.length}`);
@@ -429,7 +431,9 @@ function renderMarkdown(s: RunSummary): string {
   lines.push(`- **Iterations:** ${lastIter}`);
   lines.push(`- **State:** ${s.finalState}${s.finalMessage ? ` (${s.finalMessage})` : ''}`);
   lines.push(`- **Commits to target:** ${s.totalCommits}`);
-  lines.push(`- **Refinements used:** ${s.refinementsUsed} / ${s.evolveBudget}`);
+  lines.push(
+    `- **Refinements used:** ${s.refinementsUsed}${Number.isFinite(s.evolveBudget) && s.evolveBudget > 0 ? ` / ${s.evolveBudget}` : ' (uncapped)'}`,
+  );
   lines.push(`- **Eval overrules:** ${s.evalOverrules}`);
   lines.push(`- **Worker model:** ${s.workerModel}`);
   lines.push(`- **Judge model:** ${s.judgeModel}`);

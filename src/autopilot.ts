@@ -545,8 +545,10 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
         exitCode = 3;
         break;
       }
-      if (state.refinementsSoFar >= opts.maxRefinements) {
-        log.err(`auto-refine budget exhausted (${state.refinementsSoFar}/${opts.maxRefinements}); exit 3`);
+      // Refinement budget removed by design — we never shackle the loop.
+      // If you want a cap, pass --max-refinements <n> explicitly.
+      if (Number.isFinite(opts.maxRefinements) && state.refinementsSoFar >= opts.maxRefinements) {
+        log.err(`refinement cap reached (${state.refinementsSoFar}/${opts.maxRefinements}, --max-refinements set explicitly); exit 3`);
         exitCode = 3;
         break;
       }
@@ -571,7 +573,7 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
         await notifier.sendImmediate(
           'self-refined',
           `[autopilot] self-refined: ${nameFromPath(repo)} (refinement #${state.refinementsSoFar})`,
-          `Orchestrator triggered evolve.\n\nAutopilot commit: ${r.preHeadSha?.slice(0, 7)} → ${r.postHeadSha?.slice(0, 7)}\nRefinements so far: ${state.refinementsSoFar} / ${opts.maxRefinements}\nTranscript: ${r.transcriptPath}\nReason: ${orchestratorReason}\n`,
+          `Orchestrator triggered evolve.\n\nAutopilot commit: ${r.preHeadSha?.slice(0, 7)} → ${r.postHeadSha?.slice(0, 7)}\nRefinements so far: ${state.refinementsSoFar}${Number.isFinite(opts.maxRefinements) ? ` / ${opts.maxRefinements}` : ' (uncapped)'}\nTranscript: ${r.transcriptPath}\nReason: ${orchestratorReason}\n`,
         );
         exitCode = await relaunchAutopilot();
         break;
@@ -802,8 +804,10 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
             exitCode = 3;
             break;
           }
-          if (state.refinementsSoFar >= opts.maxRefinements) {
-            log.err(`auto-refine budget exhausted (${state.refinementsSoFar}/${opts.maxRefinements}); exit 3`);
+          // Refinement budget removed by design — we never shackle the loop.
+          // If you want a cap, pass --max-refinements <n> explicitly.
+          if (Number.isFinite(opts.maxRefinements) && state.refinementsSoFar >= opts.maxRefinements) {
+            log.err(`refinement cap reached (${state.refinementsSoFar}/${opts.maxRefinements}, --max-refinements set explicitly); exit 3`);
             exitCode = 3;
             break;
           }
@@ -826,12 +830,15 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
             state.refinementsSoFar += 1;
             await saveState(repo, state);
             log.ok('refinement committed; relaunching autopilot with --resume');
+            const budgetLine = Number.isFinite(opts.maxRefinements)
+              ? `${state.refinementsSoFar} / ${opts.maxRefinements}`
+              : `${state.refinementsSoFar} (uncapped)`;
             await notifier.sendImmediate(
               'self-refined',
               `[autopilot] self-refined: ${nameFromPath(repo)} (refinement #${state.refinementsSoFar})`,
               `Autopilot detected stagnation on ${repo} and successfully refined its own source.\n\n` +
                 `Autopilot commit: ${r.preHeadSha?.slice(0, 7)} → ${r.postHeadSha?.slice(0, 7)}\n` +
-                `Refinements so far this run: ${state.refinementsSoFar} / ${opts.maxRefinements}\n` +
+                `Refinements so far this run: ${budgetLine}\n` +
                 `Transcript: ${r.transcriptPath}\n\n` +
                 `Stagnation reason: ${reason}\n\n` +
                 `Autopilot is now relaunching against the target with --resume.\n`,
@@ -841,6 +848,9 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
           } else {
             await writeRefinementFailureNote(repo, r.reason ?? 'unknown');
             log.err(`refinement failed: ${r.reason}`);
+            const budgetLine = Number.isFinite(opts.maxRefinements)
+              ? `${state.refinementsSoFar} / ${opts.maxRefinements}`
+              : `${state.refinementsSoFar} (uncapped)`;
             await notifier.sendImmediate(
               'needs-attention',
               `[autopilot] stuck: ${nameFromPath(repo)} needs you`,
@@ -848,7 +858,7 @@ export async function runAutopilot(opts: AutopilotOptions): Promise<number> {
                 `Iteration: ${state.iteration}\n` +
                 `Stagnation reason: ${reason}\n` +
                 `Refinement failure: ${r.reason}\n` +
-                `Refinements attempted: ${state.refinementsSoFar} / ${opts.maxRefinements}\n\n` +
+                `Refinements attempted: ${budgetLine}\n\n` +
                 `Stagnation report: ${reportPath}\n` +
                 `Events log: ${repo}/.autopilot/events.jsonl\n`,
             );

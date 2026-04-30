@@ -62,7 +62,17 @@ export function metaRefinePrompt(i: MetaRefinePromptInput): string {
     eventsPath: i.eventsPath,
     refinementNumber: i.refinementsSoFar + 1,
     maxRefinements: i.maxRefinements,
+    maxRefinementsClause: renderMaxRefinementsClause(i.maxRefinements),
   });
+}
+
+/**
+ * Render the optional " of at most N" / " (uncapped)" tail to be
+ * appended after refinement-count text in skill prompts. Returns ""
+ * (empty) when uncapped so the surrounding sentence reads cleanly.
+ */
+function renderMaxRefinementsClause(maxRefinements: number): string {
+  return Number.isFinite(maxRefinements) ? ` of at most ${maxRefinements}` : ' (no per-run cap; evolve as warranted)';
 }
 
 export interface JudgePromptInput {
@@ -129,6 +139,7 @@ export function orchestratePrompt(i: OrchestratePromptInput): string {
     recentWorkerExcerptsBlock: i.recentWorkerExcerptsBlock,
     refinementsSoFar: i.refinementsSoFar,
     maxRefinements: i.maxRefinements,
+    maxRefinementsClause: renderMaxRefinementsClause(i.maxRefinements),
   });
 }
 

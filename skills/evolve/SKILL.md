@@ -27,7 +27,7 @@ real progress on the target.
     {{recentIterationsPath}}
 - Event stream (every tool call, every phase boundary):
     {{eventsPath}}
-- This is refinement #{{refinementNumber}} of at most {{maxRefinements}}.
+- This is refinement #{{refinementNumber}}{{maxRefinementsClause}}.
 
 ## Where to make changes
 

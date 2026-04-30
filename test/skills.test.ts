@@ -135,11 +135,15 @@ describe('shipped skills load', () => {
       recentCommitsBlock: '(commits)',
       recentWorkerExcerptsBlock: '(transcripts)',
       refinementsSoFar: 0,
-      maxRefinements: 3,
+      maxRefinementsClause: ' (no per-run cap; evolve as warranted)',
     });
     expect(out).toContain('next_skill');
     expect(out).toContain('iteration: 5');
-    expect(out).toContain('budget cap');
+    // After v0.11.0: orchestrator skill no longer mentions a "budget cap" —
+    // evolves are uncapped by default. The skill instead frames evolve as
+    // gated by evidence ("do not call evolve unless" rules).
+    expect(out).toContain('There is no per-run');
+    expect(out).toContain('do not call evolve unless');
   });
 
   it('work skill loads and includes outstanding bullets', () => {
@@ -167,11 +171,25 @@ describe('shipped skills load', () => {
       recentIterationsPath: '/repo/target/.autopilot/iterations',
       eventsPath: '/repo/target/.autopilot/events.jsonl',
       refinementNumber: 1,
-      maxRefinements: 3,
+      maxRefinementsClause: ' of at most 3',
     });
     expect(out).toContain('/tmp/trigger.md');
     expect(out).toContain('refinement #1 of at most 3');
     expect(out).toContain('skills/');
+  });
+
+  it('evolve skill renders uncapped clause when no max-refinements is set', () => {
+    const out = renderSkillByName('evolve', {
+      autopilotRepo: '/repo/agent-autopilot',
+      targetRepo: '/repo/target',
+      triggerReportPath: '/tmp/trigger.md',
+      recentIterationsPath: '/repo/target/.autopilot/iterations',
+      eventsPath: '/repo/target/.autopilot/events.jsonl',
+      refinementNumber: 4,
+      maxRefinementsClause: ' (no per-run cap; evolve as warranted)',
+    });
+    expect(out).toContain('refinement #4 (no per-run cap');
+    expect(out).not.toContain('of at most');
   });
 
   it('reframe skill loads', () => {

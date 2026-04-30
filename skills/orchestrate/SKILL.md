@@ -46,7 +46,7 @@ bottleneck? Pick accordingly.
 
   {{recentWorkerExcerptsBlock}}
 
-- Refinements (evolves) used so far in this run: {{refinementsSoFar}} / {{maxRefinements}}
+- Refinements (evolves) used so far in this run: {{refinementsSoFar}}{{maxRefinementsClause}}
 
 ## Decision rubric
 
@@ -66,16 +66,21 @@ Choose ONE of these next-skill options:
   worker has a systemic blind spot that no amount of work will fix
   (e.g. the worker keeps hitting the same MCP-availability error and
   the prompt never tells it to gracefully degrade; the judge accepts
-  obviously-empty UIs as "done" because the rubric is too soft). Pick
-  this *sparingly* — once you call evolve, autopilot will spawn a fresh
-  agent in its own source repo, edit a SKILL.md or src/ file, run
-  `npm install && npm test && npm run build`, then relaunch with
-  --resume. You have a finite budget ({{maxRefinements}} refinements per
-  run); do not waste them on transient issues.
+  obviously-empty UIs as "done" because the rubric is too soft). Once
+  you call evolve, autopilot will spawn a fresh agent in its own source
+  repo, edit a SKILL.md or src/ file, run `npm install && npm test &&
+  npm run build`, then relaunch with --resume. **There is no per-run
+  evolve cap** — we never shackle the loop. Evolve whenever the evidence
+  warrants it. The only restraint is the "do not call evolve unless"
+  rules below: the same root cause must be observed in 2+ iterations,
+  the cause must be inside autopilot's purview, and you must be able to
+  describe the fix in one sentence.
 
-- **`exit-stuck`**: human attention is required. The orchestrator has
-  already evolved up to the budget cap and the loop is still spinning.
-  Use this only as a last resort.
+- **`exit-stuck`**: human attention is required only when evolve itself
+  has provably failed (the meta-agent edited autopilot, tests/build
+  passed, the loop relaunched, AND the same systemic problem recurs
+  with no path forward). Reserve this for genuine dead-ends; the loop
+  is allowed to evolve indefinitely.
 
 ## Critical "do not call evolve unless" rules
 

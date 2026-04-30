@@ -72,7 +72,7 @@ program
   .option('--no-stagnation', 'disable the stagnation detector')
   .option('--no-auto-refine', 'on stagnation, do NOT spawn a meta-agent to refine autopilot itself')
   .option('--autopilot-source <path>', 'path to the agent-autopilot source repo (auto-detected if omitted)')
-  .option('--max-refinements <n>', 'cap how many times autopilot can refine itself per target run', (v) => parseInt(v, 10), 3)
+  .option('--max-refinements <n>', 'cap how many times autopilot can refine itself per target run (default: unlimited)', (v) => parseInt(v, 10))
   .option('--no-email', 'disable email alerts even if SMTP env vars are set')
   .option('-v, --verbose', 'stream full text blocks and full tool inputs to stdout (otherwise only first line / name preview)')
   .option('--start-cmd <cmd>', 'command to restart the target service on done (default: auto-detect from start.sh / package.json / pyproject.toml)')
@@ -107,7 +107,7 @@ program
         stagnationDisabled: (opts as { stagnation?: boolean }).stagnation === false,
         autoRefine: (opts as { autoRefine?: boolean }).autoRefine !== false,
         autopilotSource: opts.autopilotSource as string | undefined,
-        maxRefinements: (opts.maxRefinements as number | undefined) ?? 3,
+        maxRefinements: (opts.maxRefinements as number | undefined) ?? Number.POSITIVE_INFINITY,
         emailDisabled: (opts as { email?: boolean }).email === false,
         verbose: Boolean(opts.verbose),
         startCmd: opts.startCmd as string | undefined,
