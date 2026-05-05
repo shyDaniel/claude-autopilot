@@ -1,5 +1,25 @@
 # WORKLOG
 
+## 2026-05-05 — judge: graceful-degradation when browser MCP unlaunchable (S-046)
+
+Six-iteration loop on research-desk (iters 7–12) with identical
+`outstanding[0]` "playwright/chrome-devtools UNUSABLE on this runner —
+chromium system deps missing, sudo -n password-gated"; orchestrator
+finally fired evolve. Every other gate was green (69/69 tests, lint,
+typecheck, build, routing matrix, HTML inspection of all primary
+routes, leak scan) and the judge was already proxying via curl+HTML —
+it just kept returning `done:false` "out of caution". Sharpened
+`skills/judge/SKILL.md` with a new section preceding the hard
+"done:false" rules: names the exact MCP error signatures
+(`Missing system dependencies required to run browser
+chrome-for-testing`, `Target.setDiscoverTargets: Target closed`),
+prescribes curl+HTML as the visual-parity proxy for content/routing-first
+products, mandates `done:true` when every non-visual gate passes, and
+quotes the iter 7–12 anti-pattern verbatim so the failure mode is
+recognized on sight. Disambiguated the "When in doubt, return false"
+tail to apply only to product-quality uncertainty, not runner-environment
+issues already worked around. 249/249 tests pass; build clean.
+
 ## 2026-04-29 — orchestrator: half-wired-tree recovery, not evolve (S-029)
 
 Refinement #5/5 (final) for xiaodaoyiba-v2 run. Iter-7 trigger fired

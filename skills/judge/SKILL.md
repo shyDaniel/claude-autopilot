@@ -214,6 +214,72 @@ orchestrator routes the next iteration into `evolve` instead of
 re-running the same broken worker. Do NOT score the product as
 "close to done" when no work has actually been performed.
 
+## Browser MCP unlaunchable on this runner — graceful degradation, NOT a perpetual blocker
+
+Distinct from the "MCP gap" rule below: a browser MCP **is configured in
+`.mcp.json`** but cannot launch on this runner. This is an autopilot
+runner-environment problem, not a product defect, and **must not** loop
+the judge forever on a target that is otherwise shippable. The most
+common signatures are:
+
+- `Missing system dependencies required to run browser chrome-for-testing`
+  (playwright MCP — chromium needs `libnspr4 libnss3 libatk-bridge2.0-0
+  libxkbcommon0 libgbm1` etc. that aren't installed on the image).
+- `Protocol error (Target.setDiscoverTargets): Target closed` shortly
+  after `new_page` (chrome-devtools MCP — same root cause manifesting
+  through CDP).
+- `sudo -n true` returns `a password is required` or equivalent, so the
+  judge cannot self-install the missing libs.
+- The same blocker has carried over from a prior iteration's verdict
+  with `blocked: true` and a `blockedReason` describing the missing
+  apt-get packages.
+
+**Procedure when you hit this signature:**
+
+1. Run the headless proxy: drive the dev server with `curl -sS` against
+   each primary route, render to text via the existing build output if
+   the page is statically prerendered, and inspect HTML for the
+   structural assertions the visual rubric would have made — DOM
+   landmarks present, copy strings present, no leaked dev-only text,
+   correct routing matrix (200 for valid, 404 for invalid, 307 for
+   redirects). This is a legitimate visual-parity proxy for any page
+   whose interactivity is not the gate (most non-game web apps,
+   dashboards, content-first study tools, marketing sites).
+2. Record the MCP failure in `summary` with one sentence — what
+   command failed, what the error was, why curl+HTML is acting as the
+   proxy this iteration. Do **not** put the MCP failure in
+   `outstanding`. It is not actionable from inside the target repo.
+3. If every other gate passes (tests, lint, typecheck, build, routing
+   matrix, content invariants, HTML inspection of all primary routes,
+   leak scan for forbidden surfaces), return **`done: true`**. The
+   "When in doubt, return false" rule applies to product-quality
+   uncertainty, not to runner-environment uncertainty that has already
+   been worked around.
+4. If something the curl+HTML proxy genuinely cannot answer matters
+   for THIS product (e.g. a game where animation feel is the product,
+   a creative tool where pixel quality is the product, anything under
+   the VIRAL AESTHETIC GATE below), then return `done: false` with the
+   missing-libs-on-runner item as outstanding **with `blocked: true`
+   and a `blockedReason`** so the orchestrator can surface it to the
+   human instead of looping work iterations on a non-code defect.
+
+**Calibration:** for a content-first or routing-first product
+(documentation site, study tool, dashboard, CRUD app, CLI), curl +
+HTML inspection covers ≥ 95% of what a screenshot+Read loop would
+have answered. Returning `done: false` purely because chromium won't
+launch is autopilot misuse — you are loop-burning on a problem the
+judge cannot fix and the worker cannot fix.
+
+**Anti-pattern (the iter 7–12 failure mode that triggered this rule):**
+the judge writes a multi-paragraph summary saying "every floor gate
+green, routing matrix correct, HTML inspection of all four primary
+routes confirms the rubric, sidebar leakage scan zero hits" — then
+returns `done: false` with the only outstanding item being the
+runner's missing chromium libs from a prior iteration's `blocked:
+true` carry-over. That is a stuck judge, not a stuck product. Six
+iterations of this is six iterations of the worker getting an
+unfixable brief. Do not be that judge.
+
 ## Hard "done:false" rules — any one of these triggers outstanding items
 
 - **MCP gap:** this product needs a browser MCP (web UI) or other specialty
@@ -221,7 +287,9 @@ re-running the same broken worker. Do NOT score the product as
   configured in `.mcp.json` or the active agent config. List the
   specific MCP as outstanding #1 with an exact install snippet — the
   autopilot cannot validate properly without it, and shipping anyway is
-  negligence.
+  negligence. (Note: this rule fires when the MCP is **not configured**.
+  When the MCP IS configured but cannot launch on the runner, see the
+  graceful-degradation section above instead.)
 - You had MCPs available but did not use them — e.g. Playwright MCP was
   configured but you wrote ad-hoc Playwright scripts instead. That's
   rejected. MCPs are mandatory when available.
@@ -279,7 +347,13 @@ present), add extra entries to `subtasks` with:
     attempts and surfaced to the human in the final report.
 
 Use `"done": true` ONLY if every acceptance criterion in FINAL_GOAL.md is met
-AND the repo is genuinely shippable to millions. When in doubt, return false.
+AND the repo is genuinely shippable to millions. When in doubt about
+**product quality**, return false. When in doubt about a **runner
+environment** issue (MCP unlaunchable, missing system libs, sudo
+unavailable) that you've already worked around with curl+HTML
+inspection, see the "Browser MCP unlaunchable on this runner" section
+above — do NOT default to false on a runner problem you cannot fix
+and the worker cannot fix.
 
 If FINAL_GOAL.md is missing, return:
 
